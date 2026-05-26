@@ -1,10 +1,9 @@
 import os
 
-'''
-Commands that can be done either independent to model & dataset or case studies.
-'''
-
-if False:
+if True:
+    '''
+    Commands that can be done either independent to model & dataset or case studies.
+    '''
     cmd_ls = [
         # f"python .\main.py --data FB15k237 --model RotatE               --fig4",
         # f"python .\main.py --data FB15k237 --model RotatE               --fig5",
@@ -32,18 +31,17 @@ if False:
 
 ##########################################################################################
 
-'''
-Commands that require all models. It also iterates over the dataset.
-'''
-
 if True:
+    '''
+    Commands that require all models. It also iterates over the dataset.
+    '''
     datasets = ['FB15k237', 'wn18rr', 'YAGO3-10', 'family', 'umls', 'kinship']
     datasets = ['YAGO3-10', ]
     
     arg_ls = [
         # f"--table4",
         # f"--table5",
-        f"--fig11",
+        # f"--fig11",
     ]
     
     for data in datasets:

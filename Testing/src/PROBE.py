@@ -17,12 +17,6 @@ class PROBE():
         self.beta = beta
         self.gamma = gamma
         self.rel = rel
-
-        # if self.indep:
-        #     r_ls = []
-        #     for q in self.query:
-        #         r_ls.append(self.rel[q[1]])
-        #     self.r_ls = np.array(r_ls)
         self.W = None
 
 
@@ -98,35 +92,11 @@ class PROBE():
         assert math.isclose(sum(norm_arr), 1.0, rel_tol=1e-10)
         return norm_arr
 
-    def pick_eps_from_ratio(self, p, param, rmax=50.0, ref_quantile=0.5, min_eps=1e-12):
-        p = np.asarray(p, dtype=np.float64)
-        pos = p[p > 0]
-        if param <= 0:
-            return min_eps  # uniform weights; ε irrelevant
-        if pos.size == 0:
-            # all zeros -> use uniform reference
-            p_ref = 1.0 / max(len(p), 1)
-        else:
-            p_ref = float(np.quantile(pos, ref_quantile))
-        t = rmax ** (1.0 / param) - 1.0
-        if t <= 0:
-            return min_eps
-        return max(p_ref / t, min_eps)
-
     def w_entity_function(self, arr, param, epsilon):
         return 1 / (epsilon + arr) ** param
 
     def w_relation_function(self, arr, param, epsilon):
         return 1 / (epsilon + arr) ** param
-
-    def z_normalize(self, x, eps=1e-8):
-        mean = x.mean()
-        std = x.std()
-        return (x - mean) / (std + eps)
-
-    def softmax(self, x):
-        e = np.exp(x)
-        return e / np.sum(e)
 
     def nonezero_min(self, x):
         nz_min = np.inf
@@ -138,19 +108,10 @@ class PROBE():
     def set_entity_weight(self, beta):
         self.beta = beta
         self.entity_raw_weights = self.w_entity_function(self.t_p_e, self.beta, self.nonezero_min(self.t_p_e))
-        # self.entity_weights = self.entity_raw_weights / np.mean(self.entity_raw_weights)
-
-        # self.beta = beta
-        # self.entity_weights = self.softmax(-self.t_p_e * self.beta)
-
 
     def set_relation_weight(self, gamma):
         self.gamma = gamma
         self.relation_raw_weights = self.w_relation_function(self.t_p_r_e, self.beta, self.nonezero_min(self.t_p_r_e))
-        # self.relation_weight = self.relation_raw_weight / np.mean(self.relation_raw_weight)
-
-        # self.gamma = gamma
-        # self.relation_weight = self.softmax(-self.t_p_r_e * self.gamma)
 
     def calculate_final_metric(self, alpha, beta, gamma, tmode='f*'):
         self.alpha = alpha
@@ -161,10 +122,6 @@ class PROBE():
         self.set_entity_weight(self.beta)
         self.set_relation_weight(self.beta)
 
-        # self.WE = PROBE.normalize_array(self.entity_weights)
-        # self.WR = PROBE.normalize_array(self.relation_weight)
-        #
-        # self.norm_W = PROBE.normalize_array(self.WE * self.WR)
         self.norm_W = PROBE.normalize_array(self.entity_raw_weights * self.relation_raw_weights)
 
         assert len(self.transformed_ranks) == len(self.norm_W), print(len(self.transformed_ranks), len(self.norm_W))

@@ -14,15 +14,12 @@ from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D
 from tqdm import tqdm
 import networkx as nx
-import shutil
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
 from matplotlib import colors
 from collections import Counter
 from utils import get_ship, get_decoded
 from scipy.stats import ttest_ind
-from openpyxl import Workbook
-from openpyxl.styles import Font
 from matplotlib.patches import Patch
 from dataclasses import dataclass
 from nltk.corpus import wordnet as wn
@@ -72,60 +69,6 @@ class VisTool():
         colors = [self.mods[model_name] for model_name in model_names]
         return colors
 
-    def draw_trn_count(self):
-        fig, ax = plt.subplots(figsize=(4, 3))
-        x = self.trn_count_info.values()
-        y = [i for i in range(1, len(self.trn_count_info) + 1)]
-        norm = Normalize(vmin=min(y), vmax=max(y))
-        color = cmap(norm(value))
-        ax.scatter(x, y, s=40, edgecolor='black', color=color)
-        plt.show()
-
-    def draw_trn_tst(self, data):
-        fig = plt.figure(figsize=(4, 3))
-        axis_font = 18
-        trn_allign_tst = []
-        tst = []
-        ls = [val for val in self.trn_count_info.values() if val]
-
-        counts_filtered = [val for val in self.trn_count_info.values()]
-
-        # Count how many nodes have each degree
-        degrees = Counter(counts_filtered)
-        x_vals = list(degrees.keys())  # Degree values
-        y_vals = list(degrees.values())  # Number of nodes with that degree
-
-
-        # sort in perspective of tst
-        for key, value in sorted(self.tst_count_info.items(), key=lambda k:k[1], reverse=True):
-            tst.append(value)
-            trn_allign_tst.append(self.trn_count_info[key])
-
-        trn_cnt_ls = np.array(trn_allign_tst)
-        tst_cnt_ls = np.array(tst)
-        trn_cnt_norm = (trn_cnt_ls - trn_cnt_ls.min()) / (trn_cnt_ls.max() - trn_cnt_ls.min())
-        tst_cnt_norm = (tst_cnt_ls - tst_cnt_ls.min()) / (tst_cnt_ls.max() - tst_cnt_ls.min())
-
-        x = np.array([*range(1, 1+len(tst_cnt_norm))])
-        x_norm = (x - x.min()) / (x.max() - x.min())
-        plt.grid(True, which='both', linestyle='-', linewidth=0.5, color='gray', alpha=0.7)
-        plt.scatter(x, trn_cnt_norm, label='train', color='blue', alpha=0.3, s=20)
-        plt.scatter(x, tst_cnt_norm, label='test', color='red', alpha=0.3, s=20)
-        # plt.scatter(x_norm, trn_cnt_norm, label='trn', color='red')
-        # plt.scatter(tst_cnt_norm, x_norm, label='tst', color='blue')
-        #plt.xscale('log')
-        #plt.yscale('log')
-        plt.tick_params(axis='both', labelsize=axis_font - 3)
-        #plt.xticks([0,  5000, 10000], ['0k', '5k', '10k'])
-
-        plt.legend(fontsize=axis_font - 4)
-        #plt.title('Train and test', fontweight='bold')
-        plt.xlabel('entity id', fontsize=axis_font)
-        plt.ylabel('normalized degree', fontsize=axis_font)
-        img_name = f'{data}_train and test'
-        os.makedirs('../figs/pop_trn_tst/', exist_ok=True)
-        plt.savefig(f'../figs/pop_trn_tst/{img_name}.pdf', bbox_inches='tight', pad_inches=0.01)
-
     def draw__hyperPlane(self, mets: List[List[PROBE]], alphas: list, betas: list, gammas: List, mode='ab',
                         vis_axis=False, vis_cbar=False):
         if mode == 'ab':
@@ -142,7 +85,6 @@ class VisTool():
         num_models = len(mets)
         axis_font = 13
 
-        # Collect z-values per (x_idx, y_idx): data[(a_i, b_i)] -> [z_model0, z_model1, ...]
         for a_i, alpha in enumerate(target1):
             for b_i, beta in enumerate(target2):
                 for _met in mets:
@@ -160,26 +102,19 @@ class VisTool():
 
                     data[(a_i, b_i)].append(sum(values) / len(values))
 
-        # Normalize z across models at each (x, y) as your original code does
         for xy, z_ls in data.items():
             z_ls = np.array(z_ls, dtype=np.float64)
             denom = (z_ls.max() - z_ls.min())
             data[xy] = (z_ls - z_ls.min()) / (denom + 1e-12)
 
-        # Build a Z grid per model: Zs[m, xi, yi]
         n1, n2 = len(target1), len(target2)
         Zs = np.full((num_models, n2, n1), np.nan, dtype=np.float64)
         for (xi, yi), z_vals in data.items():
             for m_idx, z in enumerate(z_vals):
                 Zs[m_idx, xi, yi] = z
 
-        # ----------------------------
-        # Contour projection per model
-        # ----------------------------
-        # Build index grid for contour (shape: (n1, n2))
         X_idx, Y_idx = np.meshgrid(np.arange(n1), np.arange(n2))
 
-        # Guard missing points early (contour will fail with NaNs)
         for m_idx in range(num_models):
             if np.isnan(Zs[m_idx]).any():
                 missing = np.argwhere(np.isnan(Zs[m_idx]))
@@ -188,7 +123,6 @@ class VisTool():
                     f"{missing.tolist()[:10]}{' ...' if len(missing) > 10 else ''}"
                 )
 
-        # Consistent contour levels across ALL models (recommended for comparison)
         zmin = float(np.nanmin(Zs))
         zmax = float(np.nanmax(Zs))
         levels = np.linspace(zmin, zmax, 256)  # adjust 12
@@ -204,22 +138,17 @@ class VisTool():
         def _is_FB():
             return self.data == 'FB15k237'
 
-        # One row of subplots
-        # Size scales with num_models so labels don't overlap too badly
         nrow, ncol, mag = 1, 6, 1.3
         fig_row, axes = plt.subplots(
             nrow, ncol,
-            #figsize=(2 * (num_models + 1) if _is_YAGO() else 2 * num_models, 2),
             figsize=(ncol * mag, nrow * mag),
             constrained_layout=True
         )
         axes = np.array(axes).reshape(-1)
 
-        # If num_models == 1, axes is not a list
         if num_models == 1:
             axes = [axes]
 
-        # Plot each model's contour
         last_csf = None
         cmap_scheme = 'RdYlBu_r'
         for m_idx, ax2 in enumerate(axes):
@@ -244,7 +173,6 @@ class VisTool():
             x_mid = sum(ax2.get_xlim()) / 2
             y_mid = sum(ax2.get_ylim()) / 2
 
-            # draw lines
             if not (m_idx == 5 and _is_YAGO()):
                 ax2.axvline(x_mid, color='grey', lw=1, ls='--')
                 ax2.axhline(y_mid, color='grey', lw=1, ls='--')
@@ -259,21 +187,17 @@ class VisTool():
                     transform=plt.gca().transAxes
                 )
 
-            # axis info for the first model only
             if m_idx == 0:
-                # anchor point (bottom-right corner)
                 origin = (0.9, 0.1)
 
-                # x-axis (pointing LEFT)
                 ax2.annotate(
                     '',
-                    xy=(0.7, 0.1),  # left
+                    xy=(0.7, 0.1), 
                     xytext=origin,
                     arrowprops=dict(arrowstyle='-|>', lw=1, fc='black'),
                     xycoords='axes fraction'
                 )
 
-                # y-axis (pointing UP)
                 ax2.annotate(
                     '',
                     xy=(0.9, 0.3),  # up
@@ -286,20 +210,10 @@ class VisTool():
                 ax2.text(0.69, 0.1, r'$\alpha$', transform=ax2.transAxes, ha='right', va='center')
                 ax2.text(0.9, 0.31, r'$\beta$', transform=ax2.transAxes, ha='center', va='bottom')
 
-
-            # if _is_YAGO() and m_idx + 1 == len(axes): ax2.set_title('RNNLogic', fontsize=axis_font)
-            # else: ax2.set_title(model_name_ls[m_idx], fontsize=axis_font)
-            # if self.data == 'FB15k237':
-            #     ax2.set_title(model_name_ls[m_idx], fontsize=axis_font)
-
-            # Tick labels: show only on leftmost/bottom to reduce clutter
             ax2.tick_params(axis='both', which='both', length=0)
             ax2.set_xticks(np.arange(n1))
             ax2.set_yticks(np.arange(n2))
-            # "→"  # right arrow
-            # "←"  # left arrow
-            # "↑"  # up arrow
-            # "↓"  # down arrow
+ 
             if vis_axis:
                 if m_idx >= 0:
                     ax2.set_yticklabels([f"↑" if v in {target1[len(target1) // 2]} else "" for v in target1], fontsize=axis_font)
@@ -319,126 +233,11 @@ class VisTool():
             else: save_path = f'../figs/fig11/{self.data}_{model_name_ls[m_idx]}_contour_ab.pdf'
             fig.savefig(save_path, bbox_inches='tight', pad_inches=0.01, dpi=300)
             plt.close(fig)
-        return
 
-        # One shared colorbar for the whole row
-        if vis_cbar:
-            cbar = fig_row.colorbar(last_csf, ax=axes, pad=0.02, fraction=0.03,
-                                    aspect=7)
-            cbar.outline.set_visible(False)
-
-            # remove ticks completely
-            cbar.set_ticks([])
-
-            # add text labels
-            cbar.ax.text(
-                0.5, 1.02, "High",
-                ha="center",
-                va="bottom",
-                transform=cbar.ax.transAxes,
-                fontsize=axis_font-2
-            )
-
-            cbar.ax.text(
-                0.5, -0.02, "Low",
-                ha="center",
-                va="top",
-                transform=cbar.ax.transAxes,
-                fontsize=axis_font-2
-            )
-
-        fig_row.savefig(contour_pdf_path, bbox_inches='tight', dpi=300, pad_inches=0.01)
-        plt.close(fig_row)
-        return
-        # X/Y grid in index space (matches your tick labeling)
-        X, Y = np.meshgrid(np.arange(n2), np.arange(n1))  # note: X rows (target1), Y cols (target2)
-
-        color_ls = self.get_model_colors(mets)
-
-        fig = plt.figure(figsize=(10, 7))
-        ax = fig.add_subplot(111, projection='3d')
-
-        # Plot ONLY surfaces (no scatters)
-        for m_idx in range(num_models):
-            Z = Zs[m_idx]
-
-            # If something is missing, plot_surface will break; guard early.
-            if np.isnan(Z).any():
-                missing = np.argwhere(np.isnan(Z))
-                raise ValueError(
-                    f"Missing grid points for model {model_name_ls[m_idx]} at indices (target1_idx, target2_idx): "
-                    f"{missing.tolist()[:10]}{' ...' if len(missing) > 10 else ''}"
-                )
-
-            # plot_surface expects X, Y, Z with same shape; here all are (n1, n2)
-            ax.plot_surface(
-                Y, X, Z,
-                color=color_ls[m_idx],
-                linewidth=1,
-                antialiased=True,
-                alpha=0.2,  # adjust; set 1.0 if you want fully opaque surfaces
-                edgecolor=color_ls[m_idx]
-            )
-        if 1:
-            # Number of z-values per (x, y)
-            num_z = len(next(iter(data.values())))
-            # Flatten into lists
-            x, y, z, color_group = [], [], [], []
-
-            for (xi, yi), z_vals in data.items():
-                for idx, zi in enumerate(z_vals):
-                    x.append(xi)
-                    y.append(yi)
-                    z.append(zi)
-                    color_group.append(idx)
-            for idx in range(num_z):
-                x_i = [x[j] for j in range(len(x)) if color_group[j] == idx]
-                y_i = [y[j] for j in range(len(y)) if color_group[j] == idx]
-                z_i = [z[j] for j in range(len(z)) if color_group[j] == idx]
-
-                ax.scatter(x_i, y_i, z_i, c=color_ls[idx], marker=self.markers[model_name_ls[idx % len(self.markers)]],
-                           s=5, label=model_name_ls[idx], linewidths=0)
-        # Labels/ticks (same behavior as your original code)
-        if mode == 'ab':
-            ax.set_xlabel(r"$\alpha$", fontsize=axis_font)
-            ax.set_ylabel(r"$\beta$", fontsize=axis_font)
-            ax.set_zlabel("Normalized score", fontsize=axis_font)
-        elif mode == 'ag':
-            ax.set_xlabel(r"$\alpha$", fontsize=13)
-            ax.set_ylabel(r"$\gamma$", fontsize=13)
-        elif mode == 'bg':
-            ax.set_xlabel(r"$\beta$", fontsize=13)
-            ax.set_ylabel(r"$\gamma$", fontsize=13)
-
-        ax.xaxis.pane.set_alpha(0)
-        ax.yaxis.pane.set_alpha(0)
-        ax.zaxis.pane.set_alpha(0)
-        light = (0.91, 0.91, 0.91, 1)
-        ax.xaxis._axinfo["grid"]['color'] = light
-        ax.yaxis._axinfo["grid"]['color'] = light
-        ax.zaxis._axinfo["grid"]['color'] = light
-
-
-        ax.set_xticks(np.arange(n1))
-        ax.set_yticks(np.arange(n2))
-        ax.set_zticks([0, 1])
-        ax.zaxis.set_tick_params(labelsize=13)
-
-        ax.set_xticklabels([f"{a:.1f}" if not i%2 else '' for i, a in enumerate(target1)], fontsize=13)  # x-axis corresponds to target2
-        ax.set_yticklabels([f"{b:.1f}" if not i%2 else '' for i, b in enumerate(target2)], fontsize=13)  # y-axis corresponds to target1
-        #ax.set_zticklabels([f"{b:.2f}" if not i % 2 else '' for i, b in range(1)], fontsize=13)
-        ax.view_init(elev=13, azim=-80)
-
-        os.makedirs(f'../figs/2D_hyper', exist_ok=True)
-        plt.savefig(f'../figs/2D_hyper/hyper/{mets[0][0].data}_hyper_{mode}.pdf', bbox_inches='tight', pad_inches=0.01)
-        #plt.show()
-        plt.close(fig)
-
-    ###############################################
 
     def draw_3d_weights(self, met: PROBE, betas: list):
         axis_font = 12
-        cmap = cm.inferno  # or any colormap you want
+        cmap = cm.inferno 
         wfunc = met.w_entity_function
         min_r_e = min_e = epsilon = 1e-3
         max_e = min_e * 50
@@ -446,21 +245,16 @@ class VisTool():
         num_axis_points = 20
 
         for beta in betas:
-            #e = np.array([((max_e - min_e)/(num_axis_points))*i for i in range(num_axis_points + 1)])
             e = np.array([i / num_axis_points for i in range(1, num_axis_points + 1)])
             r_e = np.array([i / num_axis_points for i in range(1, num_axis_points + 1)])
 
-
-            # meshgrid should be on original axes
             X, Y = np.meshgrid(e, r_e, indexing='ij')
 
-            # apply transformation only for Z
-            Wx = wfunc(e, beta, epsilon)  # shape (N,)
-            Wy = wfunc(r_e, beta, epsilon)  # shape (N,)
+            Wx = wfunc(e, beta, epsilon) 
+            Wy = wfunc(r_e, beta, epsilon) 
 
-            Z = np.outer(Wx, Wy)  # (i,j) = Wx[i] * Wy[j]
+            Z = np.outer(Wx, Wy) 
 
-            # normalize Z → [0,1] for colormap
             norm = colors.LogNorm(vmin=Z.min(), vmax=Z.max())
             facecolors = cmap(norm(Z))
 
@@ -472,7 +266,7 @@ class VisTool():
                 facecolors=facecolors,
                 linewidth=0,
                 antialiased=True,
-                shade=False  # important: don't override colors
+                shade=False  
             )
 
             labelpad = -13
@@ -497,14 +291,12 @@ class VisTool():
 
         cbar = fig.colorbar(sm, cax=cax)
 
-        # remove all ticks and tick labels
         cbar.ax.yaxis.set_major_locator(NullLocator())
         cbar.ax.yaxis.set_minor_locator(NullLocator())
         cbar.ax.yaxis.set_major_formatter(NullFormatter())
         cbar.ax.yaxis.set_minor_formatter(NullFormatter())
         cbar.ax.tick_params(which='both', length=0, labelleft=False, labelright=False)
 
-        # custom labels
         cbar.ax.text(0.5, 1.02, 'High', ha='center', va='bottom',
                      transform=cbar.ax.transAxes, fontsize=axis_font)
         cbar.ax.text(0.5, -0.02, 'Low', ha='center', va='top',
@@ -541,7 +333,7 @@ class VisTool():
         axis_font = 18
         E = 8000
 
-        x = np.arange(1, E)  # (E-1,)
+        x = np.arange(1, E)  
         inv_x = 1.0 / x
 
         for idx, a in enumerate(alphas):
@@ -549,7 +341,7 @@ class VisTool():
                 if abs(a) < 1e-9:
                     y = 1 - np.log(x) / np.log(E)
                 else:
-                    N = (1.0 / E) ** a  # scalar, not a length-E array
+                    N = (1.0 / E) ** a 
                     y = (inv_x ** a - N) / (1 - N)
             else:
                 y = inv_x ** a
@@ -576,7 +368,7 @@ class VisTool():
             'family': 1,
             'umls': 1,
             'kinship': 1,
-        }[self.data] # smaller gamma, tighter to 1.0
+        }[self.data] 
         gamma = 1.0
 
         norm = colors.Normalize(vmin=0, vmax=1.1)
@@ -592,19 +384,13 @@ class VisTool():
         r_line = 1.0 - plot_gap
         hist_height = 0.3
 
-        # ---------------------------------------------------------
-        # 1) Build full occurrence-level arrays for LINE statistics
-        #    and global normalization range.
-        # ---------------------------------------------------------
         e_occ_list = []
         r_occ_list = []
 
-        # also collect distinct semantic objects for HIST
         unique_entities = set()
         unique_er_pairs = set()
 
         for h, r, t in self.trains:
-            # occurrence-level for line plot
             e_occ_list.extend([
                 self.trn_count_info[h] / self.total_degree,
                 self.trn_count_info[t] / self.total_degree,
@@ -614,7 +400,6 @@ class VisTool():
                 self.rel_prob[t][r],
             ])
 
-            # distinct objects for histogram
             unique_entities.add(h)
             unique_entities.add(t)
 
@@ -624,10 +409,6 @@ class VisTool():
         e_occ = np.asarray(e_occ_list, dtype=np.float64)
         r_occ = np.asarray(r_occ_list, dtype=np.float64)
 
-        # ---------------------------------------------------------
-        # 2) Global min/max for a shared x-axis transform
-        #    Both line and hist must use these same values.
-        # ---------------------------------------------------------
         e_min, e_max = e_occ.min(), e_occ.max()
         r_min, r_max = r_occ.min(), r_occ.max()
 
@@ -645,9 +426,6 @@ class VisTool():
             x = 1.0 - (1.0 - x) ** 1.0
             return x
 
-        # ---------------------------------------------------------
-        # 3) LINE PLOT: sample occurrences only for drawing speed
-        # ---------------------------------------------------------
         if plot:
             if len(e_occ) > max_lines:
                 rng = np.random.default_rng(42)
@@ -676,19 +454,12 @@ class VisTool():
             lc.set_array(x0_line)
             ax.add_collection(lc)
 
-        # ---------------------------------------------------------
-        # 4) HIST: distinct-instance count
-        #    bottom = unique entities
-        #    top    = unique (entity, relation) pairs
-        # ---------------------------------------------------------
         if bar:
-            # distinct entities
             e_hist_vals = np.asarray(
                 [self.trn_count_info[e] / self.total_degree for e in unique_entities],
                 dtype=np.float64
             )
 
-            # distinct (entity, relation)
             r_hist_vals = np.asarray(
                 [self.rel_prob[e][r] for (e, r) in unique_er_pairs],
                 dtype=np.float64
@@ -706,7 +477,6 @@ class VisTool():
             width0 = edges0[1] - edges0[0]
             width1 = edges1[1] - edges1[0]
 
-            # normalize only for visual bar height
             hist0_draw = hist0.astype(np.float64)
             hist1_draw = hist1.astype(np.float64)
 
@@ -716,7 +486,6 @@ class VisTool():
                 hist1_draw /= hist1_draw.max()
 
             bump = 0.00
-            # bottom axis: outward = downward
             ax.bar(
                 centers0,
                 -hist0_draw * hist_height -bump,
@@ -729,7 +498,6 @@ class VisTool():
                 antialiased=False
             )
 
-            # top axis: outward = upward
             ax.bar(
                 centers1,
                 hist1_draw * hist_height + bump,
@@ -759,22 +527,12 @@ class VisTool():
             ha='center', va='bottom',
             transform=ax.get_xaxis_transform(), fontsize=axis_font
         )
-        # ax.text(
-        #     0.0, r_line+bar_gap+txt_gap + 0.04, "↑",
-        #     ha='left', va='baseline',
-        #     transform=ax.get_xaxis_transform(), fontsize=axis_font
-        # )
 
         ax.text(
             0.5, -e_line - bar_gap - txt_gap + 0.02, r"Normalized $\delta(e)$",
             ha='center', va='bottom',
             transform=ax.get_xaxis_transform(), fontsize=axis_font
         )
-        # ax.text(
-        #     0.0, -e_line - bar_gap - txt_gap + 0.02, "High",
-        #     ha='left', va='top',
-        #     transform=ax.get_xaxis_transform(), fontsize=axis_font - 3
-        # )
 
         ax.axis('off')
 
@@ -831,18 +589,15 @@ class VisTool():
                 }[dataset]
 
 
-        # ---------- helper: choose bin range by walls ----------
         def in_bin(cnt, bin_idx):  # [,)
             if bin_idx == 0:
                 return cnt > walls[0] if walls else True
             elif bin_idx == len(walls):
                 return cnt <= walls[-1]
             else:
-                # walls[bin_idx] < cnt <= walls[bin_idx-1]
                 return (cnt > walls[bin_idx]) and (cnt <= walls[bin_idx - 1])
 
         if view == 'b':
-            # ---------- build count "walls" (descending) ----------
             trn_cnts = list(self.trn_count_info.values())
             trn_len = len(trn_cnts)
             walls = []
@@ -857,7 +612,7 @@ class VisTool():
                         walls.append(trn_cnts[(trn_len // chunk) * i] / total_degree)
                     elif mode == 'zenon':
                         walls.append(trn_cnts[int(trn_len * (0.5) ** i)] / total_degree)
-            walls.sort(reverse=True)  # high → low
+            walls.sort(reverse=True) 
 
             post_chunk = len(walls) + 1
             percentages = [np.count_nonzero(np.array([in_bin(cnt / total_degree, i) for cnt in trn_cnts])) / trn_len for
@@ -914,39 +669,32 @@ class VisTool():
         markers = [self.markers[mets[i][0].model] for i in range(len(mets))]
         final_metrics = [[] for _ in range(num_models)]
 
-                # ---------- compute per-model, per-bin averages ----------
         bin_samples = [[[] for _ in range(post_chunk)] for __ in range(num_models)]
 
-        # ---------- compute per-model, per-bin averages ----------
         final_results = [None for __ in range(num_models)]
         min_y, max_y = 1, 0
         err_results = [[0.0 for _ in range(post_chunk)] for __ in range(num_models)]
         for i, _met in enumerate(mets):
             models.append(_met[0].model)
             temp_results = [[0 for _ in range(post_chunk)] for __ in range(len(_met))]
-            for j, met in enumerate(_met):  # _met contains results of same model
+            for j, met in enumerate(_met): 
                 score = met.calculate_final_metric(alpha, beta, 0.0)
                 for bin_idx in range(post_chunk):
-                    # mask entities that fall into this bin
                     mask = np.array([in_bin(p, bin_idx)
                                      for p in get_reference(met)], dtype=bool)
                     list_per_entity = np.array(met.transformed_ranks, dtype=object)
-                    filtered_list = list_per_entity[mask]  # array of lists
+                    filtered_list = list_per_entity[mask]  
 
-                    # Build per-entity means for statistical testing
                     per_entity_means = float(np.mean(filtered_list))
-                    # Accumulate across j for the same model+bin
                     bin_samples[i][bin_idx] = per_entity_means
                     min_y = min(min_y, per_entity_means)
                     max_y = max(max_y, per_entity_means)
-                    # Your original aggregation for the bar height (mean over all instances)
                     size = len(filtered_list)
                     agg = sum(filtered_list)
                     temp_results[j][bin_idx] = (agg / size) if size > 0 else np.nan
 
                 final_metrics[i].append(score)
 
-            # average across j runs/configs for each bin to get a single bar per bin
             final_results[i] = [
                 np.nanmean([temp_results[_k][k] for _k in range(len(temp_results))])
                 for k in range(post_chunk)
@@ -965,7 +713,6 @@ class VisTool():
         min_val = float(np.nanmin(data))
 
         axis_font = 15
-        # build figure with 2 rows; make LOWER panel larger (e.g., 3x height of upper)
 
         hatch_dict = {
             'RotatE': '///',
@@ -1004,8 +751,6 @@ class VisTool():
                         capsize=3,
                         zorder=4
                     )
-                # overall mean line per model
-                #ax.axhline(avg_final_metrics[i], color=colors[i], linewidth=2, zorder=2, alpha=0.5)
 
         if split_ax:
             fig = plt.figure(figsize=(5.8, 2.5))
@@ -1021,17 +766,14 @@ class VisTool():
                     cut_2 = min(arr[i][0], cut_2)
                 return cut_1 + 0.02, cut_2 - 0.02
 
-            # y-limits for each panel (remove 0.4~0.6)
             cut_1, cut_2 = find_cut(final_results)
-            ax_low.set_ylim(min_y - 0.015, cut_1)  # bottom panel up to 0.4
-            ax_high.set_ylim(cut_2, max_y + 0.01)  # top panel from 0.6+
+            ax_low.set_ylim(min_y - 0.015, cut_1)  
+            ax_high.set_ylim(cut_2, max_y + 0.01)
             ax_high.axhline(cut_2, color='black', linewidth=2)
             ax_low.axhline(cut_1, color='black', linewidth=2)
 
-            # draw the same data on both panels
             _plot_on_axis(ax_low)
             _plot_on_axis(ax_high)
-            # optional: show y-grid only on lower panel (clearer)
             for ax in (ax_low, ax_high):
                 ax.tick_params('y', labelsize=axis_font)
                 ax.spines['top'].set_visible(False)
@@ -1040,10 +782,7 @@ class VisTool():
                 ax.tick_params(axis="y", length=0)
                 ax.tick_params(axis="x", length=0)
             ax_high.spines['bottom'].set_visible(False)
-            # high_yticks = [i*0.1 for i in range(int(max_y*10)+1,int(cut_2*10),-1)]
-            # if high_yticks:
-            #     ax_high.set_yticks([i for i in high_yticks])
-            #     ax_high.set_yticklabels([f'{round(i, 2)}' for i in high_yticks])
+
             from matplotlib.ticker import MultipleLocator
 
             for ax in (ax_low, ax_high):
@@ -1052,21 +791,15 @@ class VisTool():
             ax_low.yaxis.grid(True, color="grey", linestyle="-", linewidth=0.5, alpha=0.5, zorder=0)
             ax_high.yaxis.grid(True, color="grey", linestyle="-", linewidth=0.5, alpha=0.5, zorder=0)
 
-            # only bottom panel shows x labels
-            ax_high.tick_params(labelbottom=False)  # hide x tick labels on top
+            ax_high.tick_params(labelbottom=False)  
             ax_low.set_xlabel('Popularity (%)', fontsize=axis_font, labelpad=0)
             ax_low.set_xticks(x + (bar_width * (num_models - 1) / 2 if is_bin else 0))
             ax_low.set_xticklabels([f'{chunk_range[i] + 1}~{chunk_range[i + 1]}%' for i in range(post_chunk)],
                                    fontsize=axis_font)
 
-            # y ticks: you can keep coarse on each panel
-            # low_yticks = [i * 0.1 for i in range(int(cut_1 * 10) + 1, int(min_y * 10), -1)]
-            # ax_low.set_yticks([i for i in low_yticks])
-            # ax_low.set_yticklabels([f'{round(i*0.1, 2)}' for i in low_yticks])
             ax_low.set_ylabel('MRR', fontsize=axis_font, labelpad=0)
             ax_low.yaxis.set_label_coords(-0.1, 0.7)
 
-            # ax_high.legend(ncol=2, fontsize=axis_font - 7)
         else:
             fig, ax = plt.subplots(figsize=(5, 2.5))
             ax.tick_params('x', labelsize=axis_font)
@@ -1081,25 +814,19 @@ class VisTool():
             ax.yaxis.grid(True, color="grey", linestyle="-", linewidth=0.5, alpha=0.5, zorder=0)
             ax.yaxis.grid(True, color="grey", linestyle="-", linewidth=0.5, alpha=0.5, zorder=0)
 
-            # ax_low.set_xlabel('Popularity (%)', fontsize=axis_font)
             ax.set_xticks(x + (bar_width * (num_models - 1) / 2 if is_bin else 0))
             ax.set_xticklabels([f'{chunk_range[i] + 1}~{chunk_range[i + 1]}%' for i in range(post_chunk)],
                                fontsize=axis_font)
 
-            # y ticks: you can keep coarse on each panel
             ax.set_ylabel('MRR', fontsize=axis_font, labelpad=2)
-            #ax.yaxis.set_label_coords(-0.1, (max_y - min_y) / 2 + min_y)
             ax.tick_params(axis='x', pad=2)
 
-            # # legend on lower panel
-        #ax.legend(ncol=2, fontsize=axis_font - 5)
+         
 
         model_strs = '_'.join(models)
         os.makedirs(f'../figs/fig2_obs2/{mode}', exist_ok=True)
         fig.savefig(f'../figs/fig2_obs2/{mode}/{dataset}_{mode}bar_{ref}_{view}_{model_strs}.{format}', bbox_inches='tight', pad_inches=0.01)
 
-
-    ######### KEEP START #########
     def _stars(self, p):
         if p < 1e-3: return "***"
         if p < 1e-2: return "**"
@@ -1113,17 +840,14 @@ class VisTool():
         ret_dict = {'a':alpha, 'b':beta, 'g':gamma}
         name_dict = {'a': 'alpha', 'b': 'beta', 'g': 'gamma'}
 
-        # Map model -> color
         colors = {_mets[0].model: self.mods[_mets[0].model] for _mets in mets}
 
-        # 1) Collect per-model results
         model_results = {}
         for _mets in mets:
             model_name = _mets[0].model
             scores = [met.calculate_final_metric(alpha, beta, gamma) for met in _mets]
             model_results[model_name] = scores
 
-        # 2) Compute means, stds, and sort
         model_names = list(model_results.keys())
         means = {m: float(np.mean(model_results[m])) for m in model_names}
         stds = {m: float(np.std(model_results[m], ddof=1)) if len(model_results[m]) > 1 else 0.0
@@ -1138,7 +862,6 @@ class VisTool():
         yerr = np.array([stds[m] for m in order])
         bar_colors = [colors[m] for m in order]
         max_yerr = max(yerr)
-        # 3) Draw bar chart with std as error bars
         plt.xticks([])
 
         y_max = float(max(y + yerr)) if len(y) else 1.0
@@ -1155,11 +878,10 @@ class VisTool():
             label = self._stars(p)
 
             axis_font = 16
-            part = 0.35 # 0.3, higher -> tighter
+            part = 0.35 
             xs = [part, 1 - part]
             fig1, ax1 = plt.subplots(figsize=(figw, figh), constrained_layout=True)
             ax1.set_facecolor("#E9E9F1")
-            # m0 will lose later
             name_m0, name_m1 = model_names
             mean_m0, mean_m1 = np.mean(model_results[name_m0]), np.mean(model_results[name_m1])
             std_m0, std_m1 = stds[name_m0], stds[name_m1]
@@ -1171,12 +893,11 @@ class VisTool():
 
             ax1.tick_params(axis='y', direction='in', pad=0)
             for lbl in ax1.get_yticklabels():
-                lbl.set_horizontalalignment('left')  # ensures left→right reading
+                lbl.set_horizontalalignment('left') 
                 lbl.set_verticalalignment('center')
 
 
             ax1.set_xticks(xs)
-            #if target == 'a' and alpha == 1: ax1.legend(fontsize=axis_font - 2)
             ax1.set_xticklabels([])
             ax1.set_xlim(0, 1)
             ax1.set_title(fr'[$\{name_dict[target]}$ = {ret_dict[target]}]{label}', fontsize=axis_font)
@@ -1188,35 +909,26 @@ class VisTool():
             ax1.set_yticklabels([str(round(unit_tick * ii, 2)) for ii in range(ntick)], color='grey', fontsize=axis_font - 2)
 
             def adjust_ylim(ax, margin=0.001):
-                """
-                Push y-limits away from the closest y-tick if they are too close.
-
-                margin: minimum allowed distance between ylim and nearest visible tick.
-                """
                 ymin, ymax = ax.get_ylim()
                 ticks = np.asarray(ax.get_yticks())
 
-                # ----- bottom side: check nearest tick ABOVE ymin -----
                 above = ticks[ticks > ymin]
                 if above.size > 0:
                     nearest_above = above.min()
                     lower_gap = nearest_above - ymin
                     if lower_gap < margin:
-                        # move ymin just above that tick so it disappears from the axis range
                         ymin = nearest_above + 0.001
 
-                # ----- top side: check nearest tick BELOW ymax -----
                 below = ticks[ticks < ymax]
                 if below.size > 0:
                     nearest_below = below.max()
                     upper_gap = ymax - nearest_below
                     if upper_gap < margin:
-                        # move ymax just below that tick so it disappears from the axis range
                         ymax = nearest_below - 0.001
 
                 ax.set_ylim(ymin, ymax)
 
-            ax1.set_ylim(y_min - 0.007, min(1, y_max + 0.01)) # upper bound needs more space due to significance text
+            ax1.set_ylim(y_min - 0.007, min(1, y_max + 0.01)) 
             adjust_ylim(ax1, margin=0.003)
 
             for spine in ["top", "right", "left", "bottom"]:
@@ -1226,16 +938,13 @@ class VisTool():
 
             ax1.grid(True, axis="both", color="white", linewidth=1.0)
             ax1.set_axisbelow(True)
-            # title_info = fr'$\alpha$ = {alpha}' if target == 'a' else fr'$\beta$ = {beta}'
-            # ax1.set_title(f'{title_info}', fontsize=axis_font)
-            # ax1.text(0.5, 0.8, label, transform=ax1.transAxes,
-            #          ha="center", va="bottom", fontsize=axis_font)
+      
             title = f'../figs/twoOfUs/{target}/{data}_twoOfUs_{model_names}_{ret_dict[target]}({target}).pdf'
             os.makedirs(f'../figs/twoOfUs/{target}', exist_ok=True)
             fig1.savefig(title, bbox_inches='tight', pad_inches=0.001)
 
             print(f'{data} : {model_names}; {label} | {name_m0 if mean_m0 > mean_m1 else name_m1}')
-    ######### KEEP END #########
+ 
 
 
     def write_tables(self, mets: List[List[PROBE]], alphas, betas, gammas, mode='a'):
@@ -1254,8 +963,7 @@ class VisTool():
 
             all_mean_y = []
 
-            # Step 1: Collect raw mean_y for each model
-            raw_model_scores = []  # shape: [num_models, len(alphas)]
+            raw_model_scores = []  
             for idx, _mets in enumerate(mets):
                 calculated_metrics = []
                 for met in _mets:
@@ -1273,7 +981,6 @@ class VisTool():
                 all_mean_y.append((mean_y, std_y))
                 raw_model_scores.append(mean_y)
 
-            # Step 3: Plot normalized values
             for idx, (mean_y, std_y) in enumerate(all_mean_y):
                 norm_y = raw_model_scores[idx]
                 for i in range(len(other)):
@@ -1318,7 +1025,6 @@ class VisTool():
             xlabel: bool = True
     ):
 
-        # 1) Collect model names and ranks per attempt
         models = [row[0].model for row in mets]
         color_ls = self.get_model_colors(mets)
         color_ls.append('grey')
@@ -1330,7 +1036,6 @@ class VisTool():
             for j, met in enumerate(_mets):
                 all_ranks[i].append(np.asarray(met.rank, dtype=float))
 
-        # 2) Build slice ranges from cuts
         cuts = list(cuts)
         if len(cuts) == 0:
             raise ValueError("`cuts` must contain at least one integer.")
@@ -1344,7 +1049,6 @@ class VisTool():
             slices.append((a, b - 1))
         if not cut_last: slices.append((cuts[-1], np.inf))
 
-        # 3) Labels for x-axis
         def _lab(lo, hi):
             if lo < hi:
                 return f"{int(lo)}~{int(hi)}" if np.isfinite(hi) else f"Others"
@@ -1354,12 +1058,10 @@ class VisTool():
         x_labels = [_lab(lo, hi) for (lo, hi) in slices]
         nbins = len(slices)
 
-        # 4) Per-model: count ranks per slice for each attempt, then mean & std
-        fig, ax = plt.subplots(figsize=(5,2)) # 5,2.5  10,1.7
+        fig, ax = plt.subplots(figsize=(5,2))
         total_width = 0.7
         bar_width = total_width / H
-        centers = np.arange(nbins, dtype=float)  # bin centers for grouped bars
-        #centers = np.array([i - i**0.2 for i in range(1, nbins+1)], dtype=float)
+        centers = np.arange(nbins, dtype=float)  
         offsets = (np.arange(H) - (H - 1) / 2.0) * bar_width
         means = []
         stds = []
@@ -1381,14 +1083,12 @@ class VisTool():
                         counts = counts / s
                 counts_list.append(counts)
 
-            arr = np.stack(counts_list, axis=0)  # [W, nbins]
-            means.append(arr.mean(axis=0))  # [nbins]
+            arr = np.stack(counts_list, axis=0)  
+            means.append(arr.mean(axis=0)) 
             stds.append(arr.std(axis=0, ddof=1) if W > 1 else np.zeros_like(means[i]))
 
-            # Bar color from your model-color map if available
             bar_color = self.mods.get(models[i], None)
 
-            # Plot grouped bars for this model
             if both:
                 bar_color = self.mods.get(models[i], None)
                 xbar = centers + offsets[i]
@@ -1397,14 +1097,13 @@ class VisTool():
                     means[i],
                     width=bar_width,
                     label=models[i],
-                    #yerr=stds[i],
                     capsize=3,
-                    color=bar_color, # edgecolor='black', hatch=['///', 'xx'][i],
+                    color=bar_color, 
                     linewidth=0.6,
                     zorder=2,
                     error_kw = {
-                        "elinewidth": 1.8,  # thickness of error bar lines
-                        "capthick": 1.8  # thickness of caps
+                        "elinewidth": 1.8,  
+                        "capthick": 1.8 
                     }
                 )
 
@@ -1456,9 +1155,7 @@ class VisTool():
                 linewidth=0.6,
                 zorder=2
             )
-            #ax.errorbar(centers, means[i], yerr=stds[i], fmt='o', capsize=5, color='Blue')
-            # NEW: scatter markers at the center of each bar and connect them
-            # Use same color as bar for coherence; draw above bars (zorder > 2)
+   
             for i in range(H):
                 bar_color = self.mods.get(models[i], None)
                 ax.scatter(
@@ -1559,26 +1256,13 @@ class VisTool():
         hal = hl * 0.8
         width=0.028
 
-        # background
-        # tr vec
-        # for v in vs:
-        #     tr, w, metric = probe(v, 1, 0, E, eps)
-        #     ax.quiver(0, 0, tr[0], tr[1], angles='xy', scale_units='xy',
-        #               scale=1, alpha=bt_alpha if bt_alpha == 1 else 0, facecolor=v.color, width=width, edgecolor='black',
-        #               headlength=hl, headaxislength=hal)
-        # # w vec
-        # ax.quiver(0, 0, w[0], w[1], angles='xy', scale_units='xy', scale=1,
-        #           alpha=bw_alpha if bt_alpha == 1 else 0, width=width, color='black',
-        #           headlength=hl, headaxislength=hal)
-
-        # diff perspective
-        if 1 or bt_alpha < 1: # draw a new tr
+        if 1 or bt_alpha < 1: 
             for v in vs:
                 tr, w, metric = probe(v, a, b, E, eps)
                 ax.quiver(0, 0, tr[0], tr[1], angles='xy', scale_units='xy',
                           scale=1, alpha=1, facecolor=v.color, width=width, edgecolor='black',
                           headlength=hl, headaxislength=hal, zorder=2)
-        if 1 or bw_alpha < 1: # draw a new w
+        if 1 or bw_alpha < 1: 
             tr, w, metric = probe(vs[0], a, b, E, eps)
             ax.quiver(0, 0, w[0], w[1], angles='xy', scale_units='xy', scale=1,
                       alpha=1, width=width, color='white', label='w-vector',
@@ -1587,7 +1271,7 @@ class VisTool():
 
         results = [(probe(v, a, b, E, eps)[-1], v.color) for v in vs]
         metrics = np.array([m for m, _ in results])
-        rank_idx = np.argsort(metrics)[::-1]  # descending (rank1 = highest)
+        rank_idx = np.argsort(metrics)[::-1] 
         rank_map = {idx: rank for rank, idx in enumerate(rank_idx)}
 
         plt.xlim(0, 0.9)
@@ -1617,9 +1301,9 @@ class VisTool():
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         plt.tight_layout()
-        ax.tick_params(axis='both',  # apply to both x and y axis
-                       which='major',  # 'major' ticks
-                       length=2,  # length of ticks in points
+        ax.tick_params(axis='both',  
+                       which='major', 
+                       length=2,  
                        width=0.5,
                        labelsize=axis_font,)
         ax.grid(linewidth=0.5, alpha=0.7, zorder=0)
@@ -1655,38 +1339,20 @@ class VisTool():
                 model_wise_colors,
                 top_label="f/ test",
                 bottom_label="s/ test",
-                anchor=(0.98, 0.98),  # top-right of outer box in axes coords
+                anchor=(0.98, 0.98), 
                 box_width=0.6,
                 box_height=0.5,
-                label_frac=0.23,  # fraction of box width reserved for labels
-                square_size_frac=0.4,  # relative to row spacing
+                label_frac=0.23, 
+                square_size_frac=0.4, 
                 connector_lw=1.2,
                 frame_lw=0.8,
                 fontsize=18,
                 row_gap=0.28
         ):
-            """
-            Draw a 2-row rank comparison box inside an existing axes.
-
-            Parameters
-            ----------
-            ax : matplotlib axes
-            top_indices, bottom_indices : list[int]
-                Rank order for top and bottom row.
-            model_order : list
-                Maps rank index -> model key/name used in model_wise_colors.
-            model_wise_colors : dict
-                model_wise_colors[model_order[i]] -> color
-            anchor : tuple
-                (x_right, y_top) in ax.transAxes coordinates
-            """
-
-            # Outer box position in axes coordinates
             x_right, y_top = anchor
             x0 = x_right - box_width
             y0 = y_top - box_height
 
-            # Outer frame
             frame = Rectangle(
                 (x0, y0), box_width, box_height,
                 transform=ax.transAxes,
@@ -1699,7 +1365,6 @@ class VisTool():
             )
             ax.add_patch(frame)
 
-            # Layout
             label_w = box_width * label_frac
             content_x0 = x0 + label_w
             content_x1 = x0 + box_width - 0.02 * box_width
@@ -1712,17 +1377,14 @@ class VisTool():
             if len(bottom_indices) != n:
                 raise ValueError("top_indices and bottom_indices must have same length")
 
-            # x positions for each rank slot
             xs = [
                 content_x0 + content_w * (i + 0.5) / n
                 for i in range(n)
             ]
 
-            # square size in axes coordinates
             row_gap = abs(y_top_row - y_bottom_row)
             sq = row_gap * square_size_frac
 
-            # labels
             ax.text(
                 x0 + 0.04 * box_width, y_top_row,
                 top_label,
@@ -1740,11 +1402,9 @@ class VisTool():
                 zorder=12,fontstyle='italic'
             )
 
-            # map model -> x position in each row
             top_pos = {}
             bottom_pos = {}
 
-            # draw top row squares
             for rank, idx in enumerate(top_indices):
                 model = model_order[idx]
                 color = model_wise_colors[model]
@@ -1762,7 +1422,6 @@ class VisTool():
                     zorder=13
                 ))
 
-            # draw bottom row squares
             for rank, idx in enumerate(bottom_indices):
                 model = model_order[idx]
                 color = model_wise_colors[model]
@@ -1780,7 +1439,6 @@ class VisTool():
                     zorder=13
                 ))
 
-            # connectors
             for model, x_top in top_pos.items():
                 x_bottom = bottom_pos[model]
                 ax.add_line(Line2D(
@@ -1886,16 +1544,11 @@ class VisTool():
                 x_min = min(x) if min(x) < x_min else x_min
                 y_max = max(y) if max(y) > y_max else y_max
                 y_min = min(y) if min(y) < y_min else y_min
-            #ax.legend(fontsize=5)
-            #ax.plot([0.0, 1.0], [0.0, 1.0], color='grey', linewidth=1.5, linestyle='--')
 
             sort_kind = 'mergesort'
             full_sort_idx = np.argsort(-np.array(model_full_test), kind=sort_kind)
             sparse_sort_idx = np.argsort(-np.array(model_sparse_test), kind=sort_kind)
-            reorder_full_sort_idx = []
-            #for spidx in sparse_sort_idx:
-
-            #if '-0.5' in metric:
+           
             cx = Counter(model_full_test)
             cx = dict(sorted(cx.items(), reverse=True))
             new = []
@@ -1905,26 +1558,7 @@ class VisTool():
                 target_sparse_order = [i for i in sparse_sort_idx if (i in target_idxs)]
                 new.extend(target_sparse_order)
             full_sort_idx = new
-                # print([model_order[i] for i in full_sort_idx])
-                # print([model_full_test[i] for i in full_sort_idx])
-                # print([model_order[i] for i in sparse_sort_idx])
-                # print([model_sparse_test[i] for i in sparse_sort_idx])
-
-
-            # draw_rank_change_box(
-            #     ax=ax,
-            #     top_indices=full_sort_idx,
-            #     bottom_indices=sparse_sort_idx,
-            #     model_order=model_order,
-            #     model_wise_colors=model_wise_colors,
-            #     top_label="f/test:",
-            #     bottom_label="s/test:",
-            #     anchor=(0.99, 0.26),
-            #     box_width=0.72,
-            #     box_height=0.25,
-            #     fontsize=fontsize,
-            # )
-
+            
             with open(f'{txt_file}/{metric}.txt', 'w') as f:
                 f.write('full')
                 for fi in full_sort_idx:
@@ -1944,12 +1578,9 @@ class VisTool():
             ax.tick_params(axis='both', labelsize=fontsize-2)
             replace_name = change_metric_name(metric)
             plt.title(f'{replace_name}', fontsize=fontsize)
-            # plt.xlabel(f'full', fontsize=fontsize)
-            # plt.ylabel(f'sparse', fontsize=fontsize)
-            fig.savefig(f'../figs/fig12/{metric}.pdf', dpi=300, bbox_inches='tight', pad_inches=0.01)
-            #exit()
 
-        # compare among metrics
+            fig.savefig(f'../figs/fig12/{metric}.pdf', dpi=300, bbox_inches='tight', pad_inches=0.01)
+         
         linestyle_ls = {'MRR':'-.',
                         'log':'-.',
                         'sqrt':'-.',
@@ -1974,13 +1605,11 @@ class VisTool():
                 x.append(xy[0])
                 y.append(xy[1])
             ax.plot(x, y, label=metric, color=met_wise_colors[metric], linewidth=1.5, linestyle=linestyle_ls[metric], alpha=1.0 if 'PROBE' in metric else 1)
-            #ax.text(max(x)-0.06, max(y)-0.03, metric, fontsize=5)
         ax.legend(fontsize=6.5)
         plt.xlim(0, 1.02)
         plt.ylim(0, 1.02)
         plt.xlabel('(full test set)', fontsize=fontsize)
         plt.ylabel('(sparse test set)', fontsize=fontsize)
-        #ax.plot([0.0, 1.0], [0.0, 1.0], color='grey', linewidth=1.5, linestyle='--')
         fig.savefig(f'../figs/fig12/metric_wise.pdf', bbox_inches='tight', pad_inches=0.01)
 
     def fbdecode(self, id2e):
@@ -2033,12 +1662,11 @@ class VisTool():
 
         G = nx.MultiDiGraph()
 
-        # 1. Build graph with edge attributes
         rel_dict = defaultdict(int)
 
         def rel_last_token(rel: str) -> str:
-            rel = rel.split(".")[-1]  # take last segment after composition
-            return rel.rsplit("/", 1)[-1]  # last path token
+            rel = rel.split(".")[-1]  
+            return rel.rsplit("/", 1)[-1]  
 
         for i, (r, e, mode) in enumerate(edge_ls):
             rel_dict[id2r[r]] += 1
@@ -2059,25 +1687,23 @@ class VisTool():
 
         pos = nx.shell_layout(G, nlist=[[center], others])
 
-
-        # 3. Build edge color / width lists in the exact order of G.edges()
         node_default_col = '#E9E9F1'
         node_target_col = '#BABAD4'
         rel_default_col = '#EDDFDF'
         rel_target_col = '#FF5757'
 
-        nodes = list(G.nodes())  # exact iteration order
+        nodes = list(G.nodes()) 
         node_sizes = []
         node_colors = []
         for n in nodes:
-            if n == eid:  # highlight target entity
+            if n == eid: 
                 node_sizes.append(500)  # larger
                 node_colors.append(node_target_col)
             else:
                 node_sizes.append(200)  # default
                 node_colors.append(node_default_col)
 
-        edges = list(G.edges(data=True))  # (u, v, data_dict)
+        edges = list(G.edges(data=True)) 
         edge_colors = []
         edge_widths = []
 
@@ -2104,26 +1730,20 @@ class VisTool():
 
         entity_font_size = 5
         relation_font_size = 4
-        # 4. Draw
-
 
         if self.data == "wn18rr":
             node_labels = {}
             for n in nodes:
-                offset_str = id2e[n]  # e.g., "00260881"
+                offset_str = id2e[n]
                 decoded = decode_synset_any_pos(offset_str)
                 node_labels[n] = decoded if decoded is not None else offset_str
         else:
             node_labels = {n: id2e[n] for n in nodes}
 
-        # 4-B. Build readable relation labels
-        # (u, v): label
         edge_labels = {(u, v): rel_last_token(id2r[data["label"]]) for (u, v, data) in edges}
 
-        # 4-C. Draw labels
-
-        y = 0.95  # start near top
-        line_gap = 0.06  # vertical spacing between lines
+        y = 0.95  
+        line_gap = 0.06 
 
 
         cnt = 0
@@ -2171,7 +1791,6 @@ class VisTool():
                 _rid = pie_keys[idx["i"]]
                 idx["i"] += 1
                 return ""
-                return f"{pct:.1f}%" if _rid == target_k else ""
 
             return autopct
 
@@ -2200,14 +1819,12 @@ class VisTool():
         if place != -1:
             assert pie_keys[place] == rid, "What..."
 
-            # move key
             key = pie_keys.pop(place)
             pie_keys.insert(0, key)
 
             key = pie_sizes.pop(place)
             pie_sizes.insert(0, key)
 
-            # move matching color (by the same index)
             c = colors.pop(place)
             colors.insert(0, c)
 
@@ -2333,7 +1950,7 @@ class VisTool():
             else:
                 return norm1[100 - rank1] < norm2[100 - rank2]
 
-        total_pairs = min(len(ls1), len(ls2))  # so tqdm can show total
+        total_pairs = min(len(ls1), len(ls2)) 
 
         for l1, l2 in tqdm(zip(ls1, ls2),
                            total=total_pairs,
@@ -2349,7 +1966,6 @@ class VisTool():
                 mn, mx = np.min(x), np.max(x)
                 return np.zeros_like(x) if mx == mn else (x - mn) / (mx - mn)
 
-            # normalize per side
             list1_norm = normalize(mod1_info.scores)[::-1]
             list2_norm = normalize(mod2_info.scores)[::-1]
 
@@ -2366,7 +1982,6 @@ class VisTool():
 
                 fig, ax = plt.subplots(figsize=(2, 2))
 
-                # FIX: x is constant per side → vertical line of points
                 wo_ans_list1_norm, wo_ans_list2_norm = np.delete(list1_norm, 100 - mod1_info.rank), np.delete(
                     list2_norm, 100 - mod2_info.rank)
                 vp = ax.violinplot(
@@ -2382,15 +1997,14 @@ class VisTool():
                 for body, color in zip(vp['bodies'], [self.mods[model1], self.mods[model2]]):
                     body.set_facecolor(color)
                     body.set_alpha(0.3)
-                    body.set_edgecolor('black')  # ← outline color
-                    body.set_linewidth(0.8)  # ← outline thickness
+                    body.set_edgecolor('black')  
+                    body.set_linewidth(0.8) 
 
                 ax.scatter([-0.5] * len(wo_ans_list1_norm), wo_ans_list1_norm, s=30, marker='x', color=self.mods[model1],
                            label=model1, alpha=0.5)
                 ax.scatter([0.5] * len(wo_ans_list2_norm), wo_ans_list2_norm, s=30, marker='x', color=self.mods[model2],
                            label=model2, alpha=0.5)
 
-                # Highlight ranks
                 idx1 = 100 - mod1_info.rank
                 idx2 = 100 - mod2_info.rank
                 ax.scatter(-0.5, list1_norm[idx1], s=150, marker='*', color=self.mods[model1], edgecolor='black',
@@ -2407,14 +2021,11 @@ class VisTool():
                 for i in range(6):
                     ax.axhline(i * 0.2, color='grey', linestyle='--', alpha=0.5, linewidth=0.5)
 
-                # Center divider
                 ax.axvline(0, color='black', linewidth=0.5)
 
-                # Y-axis: normalized scores
                 ax.set_ylim(-0.05, 1.05)
 
                 axis_fontsize = 12
-                # Clean x-axis (only left/right labels)
                 ax.set_xlim(-1, 1)
                 ax.set_xticks([-0.5, 0.5])
                 ax.set_xticklabels([f'{model1}', f'{model2}'], fontsize=axis_fontsize)
@@ -2431,26 +2042,3 @@ class VisTool():
 
                 fig.savefig(os.path.join(new_path, filename), dpi=300, bbox_inches='tight', pad_inches=0.01)
                 plt.close(fig)
-
-    def aggregate_vectors(self, mets: List[List[PROBE]], a: float, b: float):
-        #assert mets[0][0].entity_weights is not None, 'Metric must be calculated at least once.'
-        model_ls = []
-        agg_ls = []
-        w = None
-        for _mets in mets:
-            model_name = _mets[0].model
-            model_ls.append(model_name)
-            model_temp_c = []
-            for met in _mets:
-                v = met.calculate_final_metric(a, b, b)
-                model_temp_c.append(met.transformed_ranks)
-            model_temp_c = np.array(model_temp_c)
-            agg_c = model_temp_c.mean(axis=0)
-            agg_ls.append(agg_c)
-        w = mets[0][0].norm_W
-        #agg_ls.append(w)
-        agg_ls = np.array(agg_ls)
-        return model_ls, agg_ls, w
-
-
-
