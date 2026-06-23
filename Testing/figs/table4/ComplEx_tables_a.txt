@@ -1,0 +1,6 @@
+ComplEx & \cellcolor{rank4}{0.3146} & \cellcolor{rank3}{0.4283} & \cellcolor{rank2}{0.7213} & \cellcolor{rank2}{0.9425} & \cellcolor{rank2}{0.9855}
+ & \cellcolor{rank3}{0.4754} & \cellcolor{rank4}{0.5179} & \cellcolor{rank4}{0.6594} & \cellcolor{rank4}{0.8121} & \cellcolor{rank4}{0.8700}
+ & \cellcolor{rank5}{0.4496} & \cellcolor{rank3}{0.5467} & \cellcolor{rank2}{0.7979} & \cellcolor{rank1}{0.9588} & \cellcolor{rank2}{0.9815}
+ & \cellcolor{rank5}{0.9434} & \cellcolor{rank5}{0.9619} & \cellcolor{rank4}{0.9837} & \cellcolor{rank1}{0.9942} & \cellcolor{rank1}{0.9967}
+ & \cellcolor{rank5}{0.6046} & \cellcolor{rank5}{0.6842} & \cellcolor{rank5}{0.7936} & \cellcolor{rank5}{0.8879} & \cellcolor{rank5}{0.9386}
+ & \cellcolor{rank5}{0.5394} & \cellcolor{rank5}{0.6462} & \cellcolor{rank5}{0.7857} & \cellcolor{rank5}{0.9008} & \cellcolor{rank5}{0.9594}

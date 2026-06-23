@@ -1,0 +1,6 @@
+numpy>=1.26
+matplotlib>=3.8
+scipy>=1.11
+networkx>=3.2
+nltk>=3.8
+tqdm>=4.66

@@ -1,0 +1,5 @@
+RNNLogic & \cellcolor{rank3}{0.3197} & \cellcolor{rank5}{0.1745} & \cellcolor{rank4}{0.1058} & \cellcolor{rank3}{0.0901} & \cellcolor{rank3}{0.0862}
+ & \cellcolor{rank2}{0.4807} & \cellcolor{rank4}{0.3243} & \cellcolor{rank5}{0.1820} & \cellcolor{rank5}{0.1099} & \cellcolor{rank5}{0.0817}
+ & \cellcolor{rank3}{0.9737} & \cellcolor{rank3}{0.9612} & \cellcolor{rank3}{0.9401} & \cellcolor{rank4}{0.9102} & \cellcolor{rank4}{0.8748}
+ & \cellcolor{rank3}{0.7942} & \cellcolor{rank3}{0.7608} & \cellcolor{rank4}{0.7063} & \cellcolor{rank4}{0.6251} & \cellcolor{rank5}{0.5233}
+ & \cellcolor{rank3}{0.6417} & \cellcolor{rank4}{0.6230} & \cellcolor{rank4}{0.6016} & \cellcolor{rank4}{0.5775} & \cellcolor{rank4}{0.5510}

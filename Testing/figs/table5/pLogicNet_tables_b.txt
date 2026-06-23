@@ -1,0 +1,6 @@
+pLogicNet & \cellcolor{rank2}{0.3241} & \cellcolor{rank2}{0.1912} & \cellcolor{rank2}{0.1244} & \cellcolor{rank1}{0.1103} & \cellcolor{rank1}{0.1097}
+ & \cellcolor{rank1}{0.4957} & \cellcolor{rank1}{0.3478} & \cellcolor{rank1}{0.2221} & \cellcolor{rank1}{0.1601} & \cellcolor{rank1}{0.1354}
+ & \cellcolor{rank4}{0.4535} & \cellcolor{rank4}{0.3391} & \cellcolor{rank4}{0.2167} & \cellcolor{rank2}{0.1279} & \cellcolor{rank2}{0.0861}
+ & \cellcolor{rank6}{0.8119} & \cellcolor{rank6}{0.7913} & \cellcolor{rank6}{0.7662} & \cellcolor{rank6}{0.7393} & \cellcolor{rank6}{0.7131}
+ & \cellcolor{rank6}{0.5781} & \cellcolor{rank6}{0.5590} & \cellcolor{rank6}{0.5258} & \cellcolor{rank6}{0.4774} & \cellcolor{rank6}{0.4202}
+ & \cellcolor{rank6}{0.3771} & \cellcolor{rank6}{0.3795} & \cellcolor{rank6}{0.3817} & \cellcolor{rank6}{0.3834} & \cellcolor{rank6}{0.3847}

@@ -1,0 +1,6 @@
+TuckER & \cellcolor{rank1}{0.3530} & \cellcolor{rank1}{0.4608} & \cellcolor{rank1}{0.7379} & \cellcolor{rank1}{0.9479} & \cellcolor{rank1}{0.9884}
+ & \cellcolor{rank5}{0.4625} & \cellcolor{rank5}{0.4999} & \cellcolor{rank6}{0.6368} & \cellcolor{rank5}{0.7961} & \cellcolor{rank5}{0.8583}
+ & \cellcolor{rank1}{0.5562} & \cellcolor{rank1}{0.6246} & \cellcolor{rank1}{0.8144} & \cellcolor{rank4}{0.9550} & \cellcolor{rank4}{0.9806}
+ & \cellcolor{rank1}{0.9784} & \cellcolor{rank1}{0.9832} & \cellcolor{rank1}{0.9895} & \cellcolor{rank2}{0.9939} & \cellcolor{rank2}{0.9959}
+ & \cellcolor{rank1}{0.8439} & \cellcolor{rank1}{0.8849} & \cellcolor{rank1}{0.9323} & \cellcolor{rank1}{0.9669} & \cellcolor{rank1}{0.9825}
+ & \cellcolor{rank1}{0.7067} & \cellcolor{rank1}{0.7808} & \cellcolor{rank1}{0.8716} & \cellcolor{rank1}{0.9421} & \cellcolor{rank2}{0.9759}

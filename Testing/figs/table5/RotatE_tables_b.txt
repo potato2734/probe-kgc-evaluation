@@ -1,0 +1,6 @@
+RotatE & \cellcolor{rank5}{0.3140} & \cellcolor{rank4}{0.1747} & \cellcolor{rank5}{0.1043} & \cellcolor{rank5}{0.0866} & \cellcolor{rank5}{0.0820}
+ & \cellcolor{rank4}{0.4641} & \cellcolor{rank3}{0.3326} & \cellcolor{rank2}{0.2097} & \cellcolor{rank2}{0.1462} & \cellcolor{rank2}{0.1203}
+ & \cellcolor{rank2}{0.4743} & \cellcolor{rank2}{0.3525} & \cellcolor{rank2}{0.2207} & \cellcolor{rank3}{0.1249} & \cellcolor{rank3}{0.0791}
+ & \cellcolor{rank4}{0.9487} & \cellcolor{rank5}{0.9405} & \cellcolor{rank5}{0.9259} & \cellcolor{rank5}{0.9035} & \cellcolor{rank5}{0.8745}
+ & \cellcolor{rank4}{0.7784} & \cellcolor{rank4}{0.7537} & \cellcolor{rank3}{0.7077} & \cellcolor{rank3}{0.6310} & \cellcolor{rank4}{0.5254}
+ & \cellcolor{rank4}{0.6336} & \cellcolor{rank3}{0.6273} & \cellcolor{rank3}{0.6199} & \cellcolor{rank3}{0.6113} & \cellcolor{rank3}{0.6016}

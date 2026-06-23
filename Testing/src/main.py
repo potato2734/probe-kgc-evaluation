@@ -64,7 +64,7 @@ def main(args):
 
 
     alphas = [1.0, 0.5, 0.0, -0.5, -1.0]
-    betas = [0.8, 0.6, 0.4, 0.2, 0.0]
+    betas = [0.0, 0.2, 0.4, 0.6, 0.8]
 
     vis = VisTool(count_info_dict_trn, count_info_dict_tst, trn_triples, tst_triples, nentity, nrelation, total_degree, rel_prob, args.data)
 

@@ -127,11 +127,6 @@ class VisTool():
         zmax = float(np.nanmax(Zs))
         levels = np.linspace(zmin, zmax, 256)  # adjust 12
 
-        os.makedirs(f'../figs/2D_hyper', exist_ok=True)
-        os.makedirs(f'../figs/2D_hyper/contour', exist_ok=True)
-        os.makedirs(f'../figs/2D_hyper/hyper', exist_ok=True)
-        contour_pdf_path = f'../figs/2D_hyper/contour/{mets[0][0].data}_contour_{mode}.pdf'
-
         def _is_YAGO():
             return self.data == 'YAGO3-10'
 
@@ -180,7 +175,7 @@ class VisTool():
             if m_idx == 5 and _is_YAGO():
                 ax2.text(
                     0.5, 0.5,
-                    "OOM",
+                    "O.O.M",
                     ha='center',
                     va='center',
                     fontsize=15,
@@ -1331,6 +1326,7 @@ class VisTool():
 
     @staticmethod
     def draw_owa():
+
         def draw_rank_change_box(
                 ax,
                 top_indices,
@@ -1339,67 +1335,118 @@ class VisTool():
                 model_wise_colors,
                 top_label="f/ test",
                 bottom_label="s/ test",
-                anchor=(0.98, 0.98), 
-                box_width=0.6,
-                box_height=0.5,
-                label_frac=0.23, 
-                square_size_frac=0.4, 
-                connector_lw=1.2,
+
+                standalone=True,
                 frame_lw=0.8,
+                frame_ec="grey",
+                frame_alpha=0.2,
+
+                content_left=0.26,
+                content_right=0.96,
+
+                top_row_y=0.72,
+                bottom_row_y=0.28,
+
+                label_x=0.04,
+                label_top_y=None,
+                label_bottom_y=None,
+
+                connector_lw=1.2,
                 fontsize=18,
-                row_gap=0.28
+
+                square_size_px=22,
+                square_gap_px=2,
+                square_align="center",
+
+                show_numbers=True,
+                number_start=1,
+                number_fontsize=12,
+                number_color="white",
+                number_fontweight="bold",
         ):
-            x_right, y_top = anchor
-            x0 = x_right - box_width
-            y0 = y_top - box_height
-
-            frame = Rectangle(
-                (x0, y0), box_width, box_height,
-                transform=ax.transAxes,
-                fill=False,
-                ec="grey",
-                lw=frame_lw,
-                alpha=0.2,
-                clip_on=False,
-                zorder=10
-            )
-            ax.add_patch(frame)
-
-            label_w = box_width * label_frac
-            content_x0 = x0 + label_w
-            content_x1 = x0 + box_width - 0.02 * box_width
-            content_w = content_x1 - content_x0
-
-            y_top_row = y0 + box_height * (row_gap + 0.5)
-            y_bottom_row = y0 + box_height * (0.5 - row_gap)
+            if standalone:
+                ax.set_axis_off()
+                ax.set_xlim(0, 1)
+                ax.set_ylim(0, 1)
 
             n = len(top_indices)
             if len(bottom_indices) != n:
                 raise ValueError("top_indices and bottom_indices must have same length")
 
+            if label_top_y is None:
+                label_top_y = top_row_y
+            if label_bottom_y is None:
+                label_bottom_y = bottom_row_y
+
+            frame = Rectangle(
+                (0, 0), 1, 1,
+                transform=ax.transAxes,
+                fill=False,
+                ec=frame_ec,
+                lw=frame_lw,
+                alpha=frame_alpha,
+                clip_on=False,
+                zorder=10
+            )
+            ax.add_patch(frame)
+
+            row_dist = abs(top_row_y - bottom_row_y)
+
+            ax.figure.canvas.draw()
+            bbox = ax.get_window_extent()
+
+            sq_w = square_size_px / bbox.width
+            sq_h = square_size_px / bbox.height
+
+            # Convert horizontal gap from pixels to axes coordinates
+            gap_w = square_gap_px / bbox.width
+
+            # Total width occupied by all squares and gaps
+            total_square_w = n * sq_w + (n - 1) * gap_w
+            content_w = content_right - content_left
+
+            if total_square_w > content_w:
+                raise ValueError(
+                    f"Squares do not fit: required width={total_square_w:.3f}, "
+                    f"available width={content_w:.3f}. "
+                    "Reduce square_size_px, square_gap_px, or increase content_right-content_left."
+                )
+
+            if square_align == "left":
+                start_x = content_left + sq_w / 2
+
+            elif square_align == "right":
+                start_x = content_right - total_square_w + sq_w / 2
+
+            elif square_align == "center":
+                start_x = content_left + (content_w - total_square_w) / 2 + sq_w / 2
+
+            else:
+                raise ValueError("square_align must be one of: 'left', 'center', 'right'")
+
             xs = [
-                content_x0 + content_w * (i + 0.5) / n
+                start_x + i * (sq_w + gap_w)
                 for i in range(n)
             ]
 
-            row_gap = abs(y_top_row - y_bottom_row)
-            sq = row_gap * square_size_frac
-
             ax.text(
-                x0 + 0.04 * box_width, y_top_row,
+                label_x, label_top_y,
                 top_label,
                 transform=ax.transAxes,
                 ha="left", va="center",
                 fontsize=fontsize,
-                zorder=12,fontstyle='italic'
+                zorder=12,
+                fontstyle="italic"
             )
+
             ax.text(
-                x0 + 0.04 * box_width, y_bottom_row,
+                label_x, label_bottom_y,
                 bottom_label,
                 transform=ax.transAxes,
                 ha="left", va="center",
                 fontsize=fontsize,
-                zorder=12,fontstyle='italic'
+                zorder=12,
+                fontstyle="italic"
             )
 
             top_pos = {}
@@ -1412,8 +1459,8 @@ class VisTool():
                 top_pos[model] = xc
 
                 ax.add_patch(Rectangle(
-                    (xc - sq / 2, y_top_row - sq / 2),
-                    sq, sq,
+                    (xc - sq_w / 2, top_row_y - sq_h / 2),
+                    sq_w, sq_h,
                     transform=ax.transAxes,
                     facecolor=color,
                     edgecolor=color,
@@ -1421,6 +1468,18 @@ class VisTool():
                     clip_on=False,
                     zorder=13
                 ))
+
+                if show_numbers:
+                    ax.text(
+                        xc, top_row_y - 0.03,
+                        str(number_start + rank),
+                        transform=ax.transAxes,
+                        ha="center", va="center",
+                        fontsize=number_fontsize,
+                        color=number_color,
+                        fontweight=number_fontweight,
+                        zorder=14
+                    )
 
             for rank, idx in enumerate(bottom_indices):
                 model = model_order[idx]
@@ -1429,8 +1488,8 @@ class VisTool():
                 bottom_pos[model] = xc
 
                 ax.add_patch(Rectangle(
-                    (xc - sq / 2, y_bottom_row - sq / 2),
-                    sq, sq,
+                    (xc - sq_w / 2, bottom_row_y - sq_h / 2),
+                    sq_w, sq_h,
                     transform=ax.transAxes,
                     facecolor=color,
                     edgecolor=color,
@@ -1439,11 +1498,24 @@ class VisTool():
                     zorder=13
                 ))
 
+                if show_numbers:
+                    ax.text(
+                        xc, bottom_row_y - 0.03,
+                        str(number_start + rank),
+                        transform=ax.transAxes,
+                        ha="center", va="center",
+                        fontsize=number_fontsize,
+                        color=number_color,
+                        fontweight=number_fontweight,
+                        zorder=14
+                    )
+
             for model, x_top in top_pos.items():
                 x_bottom = bottom_pos[model]
+
                 ax.add_line(Line2D(
                     [x_top, x_bottom],
-                    [y_top_row - sq / 2, y_bottom_row + sq / 2],
+                    [top_row_y - sq_h / 2, bottom_row_y + sq_h / 2],
                     transform=ax.transAxes,
                     color=model_wise_colors[model],
                     lw=connector_lw,
@@ -1451,7 +1523,7 @@ class VisTool():
                     zorder=11,
                     clip_on=False
                 ))
-
+                
         def change_metric_name(name):
             if 'PROBE' in name: return metric.replace('a=', r"$\alpha$=")
             if 'HITS' in name: return name
@@ -1490,7 +1562,7 @@ class VisTool():
                             'PROBE(a=1.0)':'#FF9933',
                             'PROBE(a=2.0)':'#FFCC00',}
 
-        fontsize = 11
+        fontsize = 8
 
         files = os.listdir(f'../data/owa')
         owa_model_ls = defaultdict(list)
@@ -1499,8 +1571,10 @@ class VisTool():
         plt.rcParams['font.family'] = 'serif'
         plt.rcParams['font.serif'] = ['Times New Roman']
         best = None
-        txt_file = f'../figs/fig12/latex'
-        os.makedirs(txt_file, exist_ok=True)
+        folder_plot = f'../figs/fig12/plot'
+        os.makedirs(folder_plot, exist_ok=True)
+        folder_box = f'../figs/fig12/box'
+        os.makedirs(folder_box, exist_ok=True)
 
         for file in files:
 
@@ -1519,8 +1593,6 @@ class VisTool():
 
         # metric wise
         for metric, ls in owa_model_ls.items():
-            with open(f'{txt_file}/{metric}.txt', 'w') as f:
-                pass
             model_full_test = list()
             model_sparse_test = list()
 
@@ -1528,7 +1600,11 @@ class VisTool():
             x_min = 1
             y_max = 0
             y_min = 1
-            fig, ax = plt.subplots(figsize=(3,1.5))
+            
+            fig_w, fig_h = 2, 1.5
+            fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+            fig_box, ax_box = plt.subplots(figsize=(fig_w, 0.4 * fig_h)) 
+            
 
             for model, _ls in zip(model_order, ls):
                 x, y = [], []
@@ -1536,7 +1612,7 @@ class VisTool():
                 for xy in _ls:
                     x.append(xy[0])
                     y.append(xy[1])
-                ax.plot(x, y, label=metric, color=model_wise_colors[model], linewidth=0.5)
+                ax.plot(x, y, color=model_wise_colors[model], linewidth=0.5)
                 max_full, max_sparse = max(_ls, key=lambda x:x[1])
                 model_full_test.append(round(max_full, 6))
                 model_sparse_test.append(round(max_sparse, 6))
@@ -1548,7 +1624,7 @@ class VisTool():
             sort_kind = 'mergesort'
             full_sort_idx = np.argsort(-np.array(model_full_test), kind=sort_kind)
             sparse_sort_idx = np.argsort(-np.array(model_sparse_test), kind=sort_kind)
-           
+            
             cx = Counter(model_full_test)
             cx = dict(sorted(cx.items(), reverse=True))
             new = []
@@ -1559,28 +1635,68 @@ class VisTool():
                 new.extend(target_sparse_order)
             full_sort_idx = new
             
-            with open(f'{txt_file}/{metric}.txt', 'w') as f:
-                f.write('full')
-                for fi in full_sort_idx:
-                    model = model_order[fi]
-                    f.write(f' & \\tikz \\fill[fill={model.lower()}] (0,0) rectangle (\\boxsize,\\boxsize);')
-                f.write('\\\\')
-                f.write('sparse')
-                for si in sparse_sort_idx:
-                    model = model_order[si]
-                    f.write(f' & \\tikz \\fill[fill={model.lower()}] (0,0) rectangle (\\boxsize,\\boxsize);')
-                f.write('\\\\')
+            ### box plot first
+            draw_rank_change_box(
+                ax=ax_box,
+                top_indices=sparse_sort_idx,
+                bottom_indices=full_sort_idx,
+                model_order=model_order,
+                model_wise_colors=model_wise_colors,
+                top_label   ="sparse",
+                bottom_label="full  ",
+
+                content_left=0.30,
+                content_right=0.96,
+
+                top_row_y=0.72,
+                bottom_row_y=0.28,
+
+                label_x=0.04,
+                
+                square_size_px=10,
+                square_gap_px=0.2,
+
+                show_numbers=True,
+                number_start=1,
+                number_fontsize=fontsize,
+                number_color="white",
+                number_fontweight='normal',
+                
+                fontsize=fontsize*0.9
+            )
+            
+            
+            
+            fig_box.savefig(os.path.join(folder_box, f'{metric}_box.pdf'), dpi=300, bbox_inches='tight', pad_inches=0.01)
+            
+            ### end of box plot
 
             if max_sparse > 0.4: ax.set_yticks([round(i*0.2, 1) for i in range(6)])
             else: ax.set_yticks([0.0, 0.1, 0.2, 0.3, 0.4])
-            plt.xlim(0.0 if x_min < 0.05 else x_min, 1.04)
-            plt.ylim(0.0 if y_min < 0.05 else y_min, 1.02 if y_max >= 0.94 else y_max + 0.01)
-            ax.tick_params(axis='both', labelsize=fontsize-2)
+            
             replace_name = change_metric_name(metric)
-            plt.title(f'{replace_name}', fontsize=fontsize)
+            ax.tick_params(axis='both', labelsize=fontsize)
+            ax.plot([0, 1], [0, 1], color='grey', ls='--', lw=2, alpha=0.5, label='ideal')
+            
+            ax.set_xlim(0.0 if x_min < 0.05 else x_min, 1.04)
+            ax.set_ylim(0.0 if y_min < 0.05 else y_min, 1.02 if y_max >= 0.94 else y_max + 0.01)
+            
+            if metric == 'MRR':
+                ax.legend(loc='lower right')
+            else:
+                pass
+            ax.set_xlabel(f'{replace_name} (full test set)', fontsize=fontsize)
+            ax.set_ylabel(f'{replace_name} (sparse test set)', fontsize=fontsize)
+            
+            ax.set_title(f'{replace_name}', fontsize=fontsize)
+            ax.grid(True, which='both', linestyle='-', linewidth=0.3, color='grey', alpha=0.5)
 
-            fig.savefig(f'../figs/fig12/{metric}.pdf', dpi=300, bbox_inches='tight', pad_inches=0.01)
-         
+            fig.savefig(os.path.join(folder_plot, f'{metric}.pdf'), dpi=300, bbox_inches='tight', pad_inches=0.01)
+            
+            plt.close(fig)
+            plt.close(fig_box)
+        
+        return
         linestyle_ls = {'MRR':'-.',
                         'log':'-.',
                         'sqrt':'-.',

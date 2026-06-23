@@ -1,0 +1,6 @@
+HousE & \cellcolor{rank6}{0.3073} & \cellcolor{rank6}{0.1651} & \cellcolor{rank6}{0.0948} & \cellcolor{rank6}{0.0775} & \cellcolor{rank6}{0.0731}
+ & \cellcolor{rank6}{0.4184} & \cellcolor{rank6}{0.3017} & \cellcolor{rank4}{0.1941} & \cellcolor{rank3}{0.1383} & \cellcolor{rank3}{0.1153}
+ & \cellcolor{rank3}{0.4538} & \cellcolor{rank5}{0.3268} & \cellcolor{rank5}{0.1828} & \cellcolor{rank5}{0.0778} & \cellcolor{rank5}{0.0297}
+ & \cellcolor{rank2}{0.9757} & \cellcolor{rank2}{0.9672} & \cellcolor{rank2}{0.9513} & \cellcolor{rank2}{0.9266} & \cellcolor{rank2}{0.8950}
+ & \cellcolor{rank2}{0.8354} & \cellcolor{rank1}{0.8128} & \cellcolor{rank1}{0.7677} & \cellcolor{rank1}{0.6903} & \cellcolor{rank2}{0.5820}
+ & \cellcolor{rank2}{0.6808} & \cellcolor{rank2}{0.6709} & \cellcolor{rank2}{0.6594} & \cellcolor{rank2}{0.6464} & \cellcolor{rank1}{0.6320}
