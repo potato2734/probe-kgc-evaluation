@@ -40,7 +40,7 @@ If you find this repository useful in your research, please consider citing our 
 @article{moon2026generalized,
   title={Generalized Rank-based Evaluation for Knowledge Graph Completion: Perspectives, Framework, and Analyses},
   author={Moon, Sooho and Kang, Jian and Ko, Yunyong},
-  journal={arXiv preprint arXiv:2606.08921},
+  journal={ACM Transactions on Knowledge Discovery from Data},
   year={2026}
 }
 ```
