@@ -96,9 +96,9 @@ def get_filters(model_name, dataset):
     return filters
 
 def get_infos(model_name, dataset):
-    path = f'../infos/{model_name}/{dataset}'
+    path = os.path.join(os.path.dirname(__file__), '..', 'infos', model_name, dataset)
     info_ls = []
-    files = os.listdir(path)
+    files = sorted(file for file in os.listdir(path) if file.endswith('.json'))
     for file in files:
         if 'track' == file: continue
         with open(os.path.join(path, file), encoding='utf-8') as f:

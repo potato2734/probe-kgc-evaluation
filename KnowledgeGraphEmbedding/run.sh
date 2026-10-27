@@ -26,7 +26,7 @@ LEARNING_RATE=${11}
 MAX_STEPS=${12}
 TEST_BATCH_SIZE=${13}
 
-SAVE=$SAVE_PATH/"$DATASET"_"$MODEL""$SAVE_ID"
+SAVE=$SAVE_PATH/"$DATASET"_"$MODEL"_"$SAVE_ID"
 
 
 # Collect additional arguments dynamically

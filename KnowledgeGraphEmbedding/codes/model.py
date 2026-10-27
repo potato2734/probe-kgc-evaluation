@@ -124,7 +124,6 @@ class KGEModel(nn.Module):
                 index=tail_part[:, 2]
             ).unsqueeze(1)
 
-            
         elif mode == 'tail-batch':
             head_part, tail_part = sample
             batch_size, negative_sample_size = tail_part.size(0), tail_part.size(1)
@@ -157,7 +156,6 @@ class KGEModel(nn.Module):
             'RotatE': self.RotatE,
             'pRotatE': self.pRotatE
         }
-        # model_func["RotatE"] == self.RotatE
         if self.model_name in model_func:
             score = model_func[self.model_name](head, relation, tail, mode)
         else:
@@ -197,8 +195,7 @@ class KGEModel(nn.Module):
         if mode == 'head-batch':
             re_score = re_relation * re_tail + im_relation * im_tail
             im_score = re_relation * im_tail - im_relation * re_tail
-            
-            
+
             score = re_head * re_score + im_head * im_score
         else:
             re_score = re_head * re_relation - im_head * im_relation
@@ -208,7 +205,6 @@ class KGEModel(nn.Module):
         save = KGEModel.check_if_save(mode)
         score = score.sum(dim = 2)
 
-        
         return score
 
     def RotatE(self, head, relation, tail, mode):
@@ -234,8 +230,7 @@ class KGEModel(nn.Module):
             im_score = re_head * im_relation + im_head * re_relation
             re_score = re_score - re_tail
             im_score = im_score - im_tail
-            
-            
+
         score = torch.stack([re_score, im_score], dim = 0)
         
         score = score.norm(dim = 0)
@@ -328,7 +323,7 @@ class KGEModel(nn.Module):
         return log
         
     @staticmethod
-    def test_step(model, test_triples, all_true_triples, args, count_info_dict_trn, id2e, id2r, p_r_e, case = True, filter=True):
+    def test_step(model, test_triples, all_true_triples, args, count_info_dict_trn, id2e, id2r, p_r_e, case = False, filter=True):
         '''
         Evaluate the model on test or valid datasets
         '''
@@ -364,8 +359,6 @@ class KGEModel(nn.Module):
             metrics = {'auc_pr': auc_pr}
             
         else:
-            #Otherwise use standard (filtered) MRR, MR, HITS@1, HITS@3, and HITS@10 metrics
-            #Prepare dataloader for evaluation
             test_dataloader_head = DataLoader(
                 TestDataset(
                     test_triples, 
@@ -404,9 +397,7 @@ class KGEModel(nn.Module):
             with torch.no_grad():
                 for test_dataset in test_dataset_list:
                     for positive_sample, negative_sample, filter_bias, mode in test_dataset: 
-                        
-                        #filter_ls.extend(torch.count_nonzero(filter_bias, dim=1).cpu().tolist())
-                        
+
                         if args.cuda:
                             positive_sample = positive_sample.cuda()
                             negative_sample = negative_sample.cuda()
@@ -468,22 +459,21 @@ class KGEModel(nn.Module):
                 metrics[metric] = sum([log[metric] for log in logs])/len(logs)
         
         total_degree = sum(i for i in count_info_dict_trn.values())
+        epsilon_entity, epsilon_relation = PROBE.training_epsilons(
+            count_info_dict_trn.values(), p_r_e,
+        )
         
-        met = PROBE(model=model, data=args.data, info_dump=info4eval, nentity=args.nentity, nrelation=args.nrelation, alpha=1, beta=0,
-                             gamma=0, total_degree=total_degree, rel=p_r_e, w_mode='t')
+        met = PROBE(model=model, data=args.data, info_dump=info4eval, nentity=args.nentity, nrelation=args.nrelation, total_degree=total_degree, rel=p_r_e, w_mode='t',
+                             epsilon_entity=epsilon_entity, epsilon_relation=epsilon_relation)
         
         alphas, betas = [-1.0, -0.5 , 0.0, 0.5, 1.0], [0.8, 0.6, 0.4, 0.2, 0.0]
         total_metric = {}
         for a in alphas:
-            probe_key = f'PROBE(a={a})'
-            total_metric[probe_key] = met.calculate_final_metric(a, 0.0, 0.0)
-            logging.info(f'PROBE(alpha={a},beta={0.0}) : {total_metric[probe_key]}')
-        for b in betas:
-            probe_key = f'PROBE(b={b})'
-            total_metric[probe_key] = met.calculate_final_metric(1.0, b, b)
-            logging.info(f'PROBE(alpha={1.0},beta={b}) : {total_metric[probe_key]}')
-    
-        
+            for b in betas:
+                probe_key = f'PROBE(alpha={a},beta={b})'
+                total_metric[probe_key] = met.calculate_final_metric(a, b)
+                logging.info(f'PROBE(alpha={a},beta={b}) : {total_metric[probe_key]}')
+
         total_metric['MR'] = metrics['MR']
         total_metric['MRR'] = metrics['MRR']
         total_metric['HITS@1'] = metrics['HITS@1']
@@ -491,5 +481,4 @@ class KGEModel(nn.Module):
         total_metric['HITS@10'] = metrics['HITS@10']
         logging.info('total metric : %s', total_metric)
     
-        #exit()
         return total_metric, rank_per_class

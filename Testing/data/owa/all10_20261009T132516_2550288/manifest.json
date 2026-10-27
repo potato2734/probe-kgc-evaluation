@@ -1,0 +1,445 @@
+{
+  "source_run": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288",
+  "aggregation": "answer",
+  "null_model": "independent discrete-uniform ranks on [1, N]",
+  "wmr_weights": "negative corruptions N - 1, multiplied by aggregation weights",
+  "wmr_adjustment": "1 - WMR / E[WMR]; exact independent discrete expectation",
+  "metric_names": [
+    "ZMRR",
+    "AMRI",
+    "WMR_BAR"
+  ],
+  "complete": true,
+  "models": {
+    "RotatE1": {
+      "model": "RotatE",
+      "seed": 10,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/RotatE_seed10/probe/20261009T132520_racrd70j",
+      "validation_evaluations": 1000,
+      "history_points": 1001,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          5018.293928733577,
+          1231.1977817020183
+        ],
+        "AMRI": [
+          0.9999870355718359,
+          0.9987657298614164
+        ],
+        "WMR_BAR": [
+          0.9995359618702019,
+          0.9982977857429733
+        ]
+      }
+    },
+    "RotatE2": {
+      "model": "RotatE",
+      "seed": 11,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/RotatE_seed11/probe/20261009T145907_afvo1gkd",
+      "validation_evaluations": 1000,
+      "history_points": 1001,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          4950.0191811482355,
+          1220.600398428457
+        ],
+        "AMRI": [
+          0.999975774499197,
+          0.998757472716316
+        ],
+        "WMR_BAR": [
+          0.9995264877020829,
+          0.9982853047404388
+        ]
+      }
+    },
+    "RotatE3": {
+      "model": "RotatE",
+      "seed": 12,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/RotatE_seed12/probe/20261009T160118_2_4v85d9",
+      "validation_evaluations": 1000,
+      "history_points": 1001,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          2234.552816955383,
+          791.6405504738281
+        ],
+        "AMRI": [
+          0.9992131443782123,
+          0.9979738844794745
+        ],
+        "WMR_BAR": [
+          0.9987514170071256,
+          0.997378319052903
+        ]
+      }
+    },
+    "RotatE4": {
+      "model": "RotatE",
+      "seed": 13,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/RotatE_seed13/probe/20261009T164930_9uifzrdz",
+      "validation_evaluations": 1000,
+      "history_points": 1001,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          4748.864785332651,
+          1194.5114873719654
+        ],
+        "AMRI": [
+          0.9999255728266343,
+          0.9987132697958379
+        ],
+        "WMR_BAR": [
+          0.9994921278339122,
+          0.9982412978941283
+        ]
+      }
+    },
+    "RotatE5": {
+      "model": "RotatE",
+      "seed": 14,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/RotatE_seed14/probe/20261009T174936_rcal8j28",
+      "validation_evaluations": 1000,
+      "history_points": 1001,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          4541.1047221469635,
+          1162.9390955663707
+        ],
+        "AMRI": [
+          0.9998366198158729,
+          0.9986309950087289
+        ],
+        "WMR_BAR": [
+          0.9994442903967273,
+          0.9981698180800556
+        ]
+      }
+    },
+    "ComplEx1": {
+      "model": "ComplEx",
+      "seed": 20,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/ComplEx_seed20/probe/20261009T184825_8fg2gcdi",
+      "validation_evaluations": 334,
+      "history_points": 335,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          1590.7161481545468,
+          569.6344246763147
+        ],
+        "AMRI": [
+          0.9984434169425392,
+          0.9972221381674518
+        ],
+        "WMR_BAR": [
+          0.9979734377295949,
+          0.9963835811208656
+        ]
+      }
+    },
+    "ComplEx2": {
+      "model": "ComplEx",
+      "seed": 21,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/ComplEx_seed21/probe/20261009T193859_vea5vi5c",
+      "validation_evaluations": 334,
+      "history_points": 335,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          1532.2844961492779,
+          552.4740477642302
+        ],
+        "AMRI": [
+          0.9984124726504978,
+          0.9971992950474732
+        ],
+        "WMR_BAR": [
+          0.9979151171870766,
+          0.9963238701853485
+        ]
+      }
+    },
+    "ComplEx3": {
+      "model": "ComplEx",
+      "seed": 22,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/ComplEx_seed22/probe/20261009T201441_jharttb9",
+      "validation_evaluations": 334,
+      "history_points": 335,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          1729.6368579368236,
+          631.0261182376295
+        ],
+        "AMRI": [
+          0.9985481259919089,
+          0.9973338815682128
+        ],
+        "WMR_BAR": [
+          0.998133995081474,
+          0.9966200648174695
+        ]
+      }
+    },
+    "ComplEx4": {
+      "model": "ComplEx",
+      "seed": 23,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/ComplEx_seed23/probe/20261009T203802_b5lv49ir",
+      "validation_evaluations": 334,
+      "history_points": 335,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          1619.8624013225292,
+          583.40133042735
+        ],
+        "AMRI": [
+          0.9984560028472534,
+          0.9972378613539306
+        ],
+        "WMR_BAR": [
+          0.9979989169951045,
+          0.9964243173248474
+        ]
+      }
+    },
+    "ComplEx5": {
+      "model": "ComplEx",
+      "seed": 24,
+      "session": "/data/store/moonsooho/TKDD/Open-World-KG/kge-master/models/all10_20261009T132516_2550288/ComplEx_seed24/probe/20261009T210603_mtcwejco",
+      "validation_evaluations": 334,
+      "history_points": 335,
+      "baselines": {
+        "full": {
+          "record_count": 7075,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5956,
+          "candidate_count_max": 5994,
+          "expected_mrr": 0.0015517943906275227,
+          "mrr_variance": 3.856459595295904e-08,
+          "expected_wmr": 2200.3534577409437
+        },
+        "sparse": {
+          "record_count": 3381,
+          "query_count": 500,
+          "nentity": 6004,
+          "candidate_count_min": 5963,
+          "candidate_count_max": 6001,
+          "expected_mrr": 0.0015500716783022482,
+          "mrr_variance": 8.059964862529621e-08,
+          "expected_wmr": 2203.260015930694
+        }
+      },
+      "final_metrics": {
+        "ZMRR": [
+          1597.972442914355,
+          566.5679462302705
+        ],
+        "AMRI": [
+          0.9984471075461773,
+          0.9972079971884173
+        ],
+        "WMR_BAR": [
+          0.99798052753125,
+          0.9963697867229246
+        ]
+      }
+    }
+  }
+}

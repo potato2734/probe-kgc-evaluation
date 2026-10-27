@@ -171,7 +171,7 @@ def set_logger(args):
         log_file = os.path.join(args.save_path or args.init_checkpoint, 'test.log')
     if os.path.exists(log_file):
         print('Already exists')
-        #exit()
+        exit()
         
     logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
@@ -311,20 +311,25 @@ def main(args):
     
     if args.do_train:
         # Set training dataloader iterator
+        g = torch.Generator()
+        g.manual_seed(args.seed)
+
         train_dataloader_head = DataLoader(
             TrainDataset(train_triples, nentity, nrelation, args.negative_sample_size, 'head-batch'), 
             batch_size=args.batch_size,
             shuffle=True, 
-            num_workers=max(1, args.cpu_num//2),
-            collate_fn=TrainDataset.collate_fn
+            num_workers=max(1, args.cpu_num // 2),
+            collate_fn=TrainDataset.collate_fn,
+            generator=g
         )
             
         train_dataloader_tail = DataLoader(
             TrainDataset(train_triples, nentity, nrelation, args.negative_sample_size, 'tail-batch'), 
             batch_size=args.batch_size,
             shuffle=True, 
-            num_workers=max(1, args.cpu_num//2),
-            collate_fn=TrainDataset.collate_fn
+            num_workers=max(1, args.cpu_num // 2),
+            collate_fn=TrainDataset.collate_fn,
+            generator=g
         )
         
         train_iterator = BidirectionalOneShotIterator(train_dataloader_head, train_dataloader_tail)
@@ -410,15 +415,15 @@ def main(args):
                     'warm_up_steps': warm_up_steps
                     }
                     
-                    metrics, ranks = kge_model.test_step(kge_model, test_triples, all_true_triples, args, p_e, id2e, id2r, p_r_condition_e, case=True, filter=True)
-                    log_metrics('Test', step, metrics)
                     save_model(kge_model, optimizer, save_variable_list, args)
                     patience = 0
                 else:
                     patience += 1
-                    if patience >= 5:
+                    if patience >= 5 and False:
                         logging.info('Early stop')
                         exit()
+                metrics, ranks = kge_model.test_step(kge_model, test_triples, all_true_triples, args, p_e, id2e, id2r, p_r_condition_e, case=False, filter=True)
+                log_metrics('Test', step, metrics)
 
                 
         
@@ -430,7 +435,7 @@ def main(args):
     if args.do_test:
         logging.info('Evaluating on Test Dataset...')
         _time = time()
-        metrics, _ = kge_model.test_step(kge_model, test_triples, all_true_triples, args, p_e, id2e, id2r, p_r_condition_e, case=True, filter=True)
+        metrics, _ = kge_model.test_step(kge_model, test_triples, all_true_triples, args, p_e, id2e, id2r, p_r_condition_e, case=False, filter=True)
         logging.info(f'Evaluation time : {time() - _time}')
         log_metrics('Test', step, metrics)
     

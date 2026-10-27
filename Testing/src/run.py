@@ -1,55 +1,41 @@
-import os
+"""Run selected paper analyses across datasets using the current interpreter."""
+import argparse
+from pathlib import Path
+import subprocess
+import sys
 
-if True:
-    '''
-    Commands that can be done either independent to model & dataset or case studies.
-    '''
-    cmd_ls = [
-        # f"python .\main.py --data FB15k237 --model RotatE RNNLogic      --fig2_obs1",
-        # f"python .\main.py --data FB15k237 --model RotatE RNNLogic      --fig2_obs2",
-        
-        # f"python .\main.py --data FB15k237 --model RotatE               --fig4",
-        # f"python .\main.py --data FB15k237 --model RotatE               --fig5",
-        # f"python .\main.py --data FB15k237 --model RotatE               --fig6_a",
-        # f"python .\main.py --data FB15k237 --model RotatE               --fig6_bcd",
-        # f"python .\main.py --data FB15k237 --model RotatE               --fig7",      
-        
-        # f"python .\main.py --data wn18rr --model HousE RNNLogic         --fig9",
-        # f"python .\main.py --data YAGO3-10 --model pLogicNet HousE      --fig9",
-        
-        # f"python .\main.py --data FB15k237 --model pLogicNet TuckER     --fig10_top",
-        # f"python .\main.py --data umls --model ComplEx RNNLogic         --fig10_top",
-        
-        # f"python .\main.py --data FB15k237 --model pLogicNet TuckER     --fig10_bottom",
-        # f"python .\main.py --data umls --model ComplEx RNNLogic         --fig10_bottom",
-        
-        f"python .\main.py --data FB15k237 --model RotatE               --fig12",  
-    ]
-    
-    for cmd in cmd_ls:
-        print(f"Running: {cmd}")
-        os.system(cmd)
 
-##########################################################################################
+DATASETS = ('FB15k237', 'wn18rr', 'YAGO3-10', 'family', 'umls', 'kinship')
+MODELS = ('RotatE', 'ComplEx', 'HousE', 'TuckER', 'pLogicNet', 'RNNLogic')
+FLAGS = ('table4', 'table5', 'fig11', 'm9', 'm15c', 'm16')
 
-if True:
-    '''
-    Commands that require all models. It also iterates over the dataset.
-    '''
-    datasets = ['FB15k237', 'wn18rr', 'YAGO3-10', 'family', 'umls', 'kinship']
-    
-    arg_ls = [
-        # f"--table4",
-        # f"--table5",
-        #f"--fig11",
-    ]
-    
-    for data in datasets:
-        if data in {'YAGO3-10'}: # No results for RNNLogic on YAGO3-10 due to OOM.
-            models = ['RotatE', 'ComplEx', 'HousE', 'TuckER', 'pLogicNet']
-        else: 
-            models = ['RotatE', 'ComplEx', 'HousE', 'TuckER', 'pLogicNet','RNNLogic']
-        cmd = f"python main.py --data {data} --model {' '.join(models)} {' '.join(arg_ls)}"
 
-        print(f"Running: {cmd}")
-        os.system(cmd)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--datasets', nargs='+', choices=DATASETS, default=list(DATASETS))
+    parser.add_argument('--models', nargs='+', default=None)
+    parser.add_argument('--baselines', action='store_true', help='Export baseline JSON/CSV reports')
+    for flag in FLAGS:
+        parser.add_argument('--' + flag, action='store_true')
+    args = parser.parse_args(argv)
+    flags = ['--' + flag for flag in FLAGS if getattr(args, flag)]
+    if not flags and not args.baselines:
+        flags = ['--table4', '--table5']
+    source_dir = Path(__file__).resolve().parent
+    for dataset in args.datasets:
+        models = args.models or [model for model in MODELS
+                                 if not (dataset == 'YAGO3-10' and model == 'RNNLogic')]
+        commands = []
+        if flags:
+            commands.append([sys.executable, str(source_dir / 'main.py'),
+                             '--data', dataset, '--models', *models, *flags])
+        if args.baselines:
+            commands.append([sys.executable, str(source_dir / 'baseline_metrics.py'),
+                             '--data', dataset, '--models', *models])
+        for command in commands:
+            print('Running:', ' '.join(command), flush=True)
+            subprocess.run(command, cwd=source_dir, check=True)
+
+
+if __name__ == '__main__':
+    main()

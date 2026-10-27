@@ -27,7 +27,7 @@ MAX_STEPS=${12}
 TEST_BATCH_SIZE=${13}
 L2=${14}
 
-SAVE=$SAVE_PATH/"$DATASET"_"$MODEL""$SAVE_ID"
+SAVE=$SAVE_PATH/"$DATASET"_"$MODEL"_"$SAVE_ID"
 
 # Collect additional arguments dynamically
 EXTRA_ARGS="${@:15}"  # Captures all arguments from the 14th onward

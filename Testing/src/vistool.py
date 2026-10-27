@@ -8,7 +8,7 @@ from collections import defaultdict
 from matplotlib.collections import LineCollection
 from matplotlib.patches import Rectangle
 import matplotlib.pyplot as plt
-from matplotlib.ticker import NullLocator, NullFormatter
+from matplotlib.ticker import FormatStrFormatter, MaxNLocator, MultipleLocator, NullLocator, NullFormatter, ScalarFormatter, PercentFormatter
 from matplotlib import gridspec
 from matplotlib.colors import to_rgba
 from matplotlib.lines import Line2D
@@ -19,18 +19,70 @@ import matplotlib.colors as mcolors
 from matplotlib import colors
 from collections import Counter
 from utils import get_ship, get_decoded
-from scipy.stats import ttest_ind
+from scipy.stats import kendalltau, spearmanr, ttest_ind, rankdata
+from rank_metrics import METRIC_NAMES, METRIC_LABELS, CANDIDATE_SWEEP_METRICS, candidate_size_sweep
 from matplotlib.patches import Patch
 from dataclasses import dataclass
 from nltk.corpus import wordnet as wn
 import warnings
 from functools import lru_cache
+import pandas as pd
 
 warnings.filterwarnings(
     "ignore",
     message="No WordNet synset found for pos="
 )
 
+OWA_MODEL_COLORS = {
+    'RotatE1': '#073B4C', 'RotatE2': '#009999', 'RotatE3': '#6062B8',
+    'RotatE4': '#0099FF', 'RotatE5': '#2149C9',
+    'ComplEx1': '#996633', 'ComplEx2': '#808000', 'ComplEx3': '#FF9900',
+    'ComplEx4': '#A50021', 'ComplEx5': '#CCCC00',
+}
+
+def load_owa_histories(data_dir, metrics=None):
+    """Read the ten model files; manifests/step sidecars are not model results."""
+    plt.rcParams.update({'font.family': 'serif',
+                         'font.serif': ['DejaVu Serif', 'Liberation Serif']})
+    histories = {}
+    for model in OWA_MODEL_COLORS:
+        path = os.path.join(data_dir, model + '.json')
+        with open(path, encoding='utf-8') as stream:
+            histories[model] = json.load(stream)
+    metrics = list(metrics) if metrics is not None else list(histories['RotatE1'])
+    if not metrics:
+        raise ValueError('No OWA metrics requested')
+    for model, history in histories.items():
+        for metric in metrics:
+            if metric not in history:
+                raise KeyError('%r is missing from %s/%s.json' % (metric, data_dir, model))
+            values = np.asarray(history[metric], dtype=float)
+            if values.ndim != 2 or values.shape[0] == 0 or values.shape[1] != 2 or not np.isfinite(values).all():
+                raise ValueError('Expected nonempty finite full/sparse pairs for %s/%s' % (model, metric))
+            history[metric] = values
+    return histories, metrics
+
+def owa_training_steps(data_dir, model, size):
+    path = os.path.join(data_dir, model + '.steps.json')
+    if not os.path.exists(path):
+        return np.arange(size), 'Evaluation step'
+    with open(path, encoding='utf-8') as stream:
+        steps = np.asarray(json.load(stream)['steps'])
+    if steps.shape != (size,) or np.any(np.diff(steps) < 0):
+        raise ValueError('Invalid training step sidecar: %s' % path)
+    return steps, 'Training step (zero-based)'
+
+def owa_metric_label(metric):
+    if metric in METRIC_LABELS:
+        return METRIC_LABELS[metric]
+    if 'PROBE' in metric:
+        return metric.replace('a=', r'$\alpha$=')
+    if metric in ('MRR', 'log', 'sqrt'):
+        return {'MRR': '1.0-MRR', 'log': 'log-MRR', 'sqrt': '0.5-MRR'}[metric]
+    if metric.startswith('P') and '_' in metric:
+        numerator, denominator = metric[1:].split('_')
+        return '%s-MRR' % round(int(numerator) / int(denominator), 2)
+    return metric
 
 @dataclass
 class Vector:
@@ -41,14 +93,16 @@ class Vector:
 
 class VisTool():
     def __init__(self, trn_count_info, tst_count_info, trains, tests, nentity, nrelation, total_degree, rel_prob, data):
-        plt.rcParams['font.family'] = 'serif'
-        plt.rcParams['font.serif'] = ['Times New Roman']
+        plt.rcParams.update({
+            "font.family": "serif",
+            "font.serif": ["DejaVu Serif", "Liberation Serif"],
+        })
         self.trn_count_info = trn_count_info
         self.tst_count_info = tst_count_info
         self.markers = {'RotatE': 'o', 'ComplEx': 's', 'HousE':'^', 'TuckER':'v', 'pLogicNet':'D',
-                        'RNNLogic':'p', 'CompGCN':'*'}
+                        'RNNLogic':'p', 'A*Net':'x'}
         self.mods = {'RotatE':'#073b4c', 'ComplEx':'#118ab2','HousE':'#06d6a0', 'TuckER':'#FFB715',
-                      'pLogicNet':'#F78C6B', 'RNNLogic':'#ef476f','CompGCN':'#80B563'}
+                      'pLogicNet':'#F78C6B', 'RNNLogic':'#ef476f','A*Net':"#710730"}
 
         self.trains = trains[:]
         self.tests = tests[:]
@@ -69,16 +123,11 @@ class VisTool():
         colors = [self.mods[model_name] for model_name in model_names]
         return colors
 
-    def draw__hyperPlane(self, mets: List[List[PROBE]], alphas: list, betas: list, gammas: List, mode='ab',
+    def draw__hyperPlane(self, mets: List[List[PROBE]], alphas: list, betas: list, gammas=None, mode='ab',
                         vis_axis=False, vis_cbar=False):
-        if mode == 'ab':
-            target1, target2 = alphas, betas
-        elif mode == 'ag':
-            target1, target2 = alphas, gammas
-        elif mode == 'bg':
-            target1, target2 = betas, gammas
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
+        if mode != 'ab':
+            raise ValueError('PROBE has two parameters; only alpha/beta contours are supported')
+        target1, target2 = alphas, betas
 
         data = defaultdict(list)
         model_name_ls = []
@@ -93,12 +142,7 @@ class VisTool():
                         model_name_ls.append(_met[0].model)
 
                     for met in _met:
-                        if mode == 'ab':
-                            values.append(met.calculate_final_metric(alpha, beta, 0.0))
-                        elif mode == 'ag':
-                            values.append(met.calculate_final_metric(alpha, 0.0, beta))
-                        elif mode == 'bg':
-                            values.append(met.calculate_final_metric(1.0, alpha, beta))
+                        values.append(met.calculate_final_metric(alpha, beta))
 
                     data[(a_i, b_i)].append(sum(values) / len(values))
 
@@ -125,30 +169,18 @@ class VisTool():
 
         zmin = float(np.nanmin(Zs))
         zmax = float(np.nanmax(Zs))
-        levels = np.linspace(zmin, zmax, 256)  # adjust 12
+        levels = np.linspace(zmin, zmax, 256)
 
-        def _is_YAGO():
-            return self.data == 'YAGO3-10'
+        plot_models = list(enumerate(model_name_ls))
+        if self.data == 'YAGO3-10' and 'RNNLogic' not in model_name_ls:
+            # Keep the missing RNNLogic panel separate from actual model results.
+            plot_models.insert(5, (None, 'RNNLogic'))
 
-        def _is_FB():
-            return self.data == 'FB15k237'
-
-        nrow, ncol, mag = 1, 6, 1.3
-        fig_row, axes = plt.subplots(
-            nrow, ncol,
-            figsize=(ncol * mag, nrow * mag),
-            constrained_layout=True
-        )
-        axes = np.array(axes).reshape(-1)
-
-        if num_models == 1:
-            axes = [axes]
-
-        last_csf = None
+        mag = 1.3
         cmap_scheme = 'RdYlBu_r'
-        for m_idx, ax2 in enumerate(axes):
+        for panel_idx, (m_idx, model_name) in enumerate(plot_models):
             fig, ax2 = plt.subplots(figsize=(mag, mag), constrained_layout=True)
-            if _is_YAGO() and m_idx + 1 == len(axes):
+            if m_idx is None:
                 ax2.set_facecolor("white")
                 ax2.set_xticks([])
                 ax2.set_yticks([])
@@ -168,11 +200,11 @@ class VisTool():
             x_mid = sum(ax2.get_xlim()) / 2
             y_mid = sum(ax2.get_ylim()) / 2
 
-            if not (m_idx == 5 and _is_YAGO()):
+            if m_idx is not None:
                 ax2.axvline(x_mid, color='grey', lw=1, ls='--')
                 ax2.axhline(y_mid, color='grey', lw=1, ls='--')
 
-            if m_idx == 5 and _is_YAGO():
+            if m_idx is None:
                 ax2.text(
                     0.5, 0.5,
                     "O.O.M",
@@ -182,7 +214,7 @@ class VisTool():
                     transform=plt.gca().transAxes
                 )
 
-            if m_idx == 0:
+            if panel_idx == 0:
                 origin = (0.9, 0.1)
 
                 ax2.annotate(
@@ -195,13 +227,12 @@ class VisTool():
 
                 ax2.annotate(
                     '',
-                    xy=(0.9, 0.3),  # up
+                    xy=(0.9, 0.3),
                     xytext=origin,
                     arrowprops=dict(arrowstyle='-|>', lw=1, fc='black'),
                     xycoords='axes fraction'
                 )
 
-                # labels
                 ax2.text(0.69, 0.1, r'$\alpha$', transform=ax2.transAxes, ha='right', va='center')
                 ax2.text(0.9, 0.31, r'$\beta$', transform=ax2.transAxes, ha='center', va='bottom')
 
@@ -210,7 +241,7 @@ class VisTool():
             ax2.set_yticks(np.arange(n2))
  
             if vis_axis:
-                if m_idx >= 0:
+                if m_idx is not None:
                     ax2.set_yticklabels([f"↑" if v in {target1[len(target1) // 2]} else "" for v in target1], fontsize=axis_font)
                 else:
                     ax2.set_yticklabels([])
@@ -223,12 +254,10 @@ class VisTool():
             ax2.set_ylim(0, n2 - 1)
             ax2.set_aspect("equal", adjustable="box")
             os.makedirs(f'../figs/fig11', exist_ok=True)
-            if (_is_YAGO() and m_idx + 1 != len(axes)) or (not _is_YAGO()): last_csf = csf
-            if _is_YAGO() and m_idx == 5: save_path = f'../figs/fig11/{self.data}_RNNLogic_contour_ab.pdf'
-            else: save_path = f'../figs/fig11/{self.data}_{model_name_ls[m_idx]}_contour_ab.pdf'
+            file_model_name = 'AStarNet' if model_name == 'A*Net' else model_name
+            save_path = f'../figs/fig11/{self.data}_{file_model_name}_contour_ab.pdf'
             fig.savefig(save_path, bbox_inches='tight', pad_inches=0.01, dpi=300)
             plt.close(fig)
-
 
     def draw_3d_weights(self, met: PROBE, betas: list):
         axis_font = 12
@@ -505,8 +534,6 @@ class VisTool():
                 antialiased=False
             )
 
-
-
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
 
@@ -515,7 +542,6 @@ class VisTool():
 
         bar_gap = 0.02
         txt_gap = 0.02
-
 
         ax.text(
             0.5, r_line+bar_gap+txt_gap, r"Normalized $\delta(r|e)$",
@@ -583,8 +609,7 @@ class VisTool():
                 'kinship': [25, 50, 75],
                 }[dataset]
 
-
-        def in_bin(cnt, bin_idx):  # [,)
+        def in_bin(cnt, bin_idx):
             if bin_idx == 0:
                 return cnt > walls[0] if walls else True
             elif bin_idx == len(walls):
@@ -673,7 +698,7 @@ class VisTool():
             models.append(_met[0].model)
             temp_results = [[0 for _ in range(post_chunk)] for __ in range(len(_met))]
             for j, met in enumerate(_met): 
-                score = met.calculate_final_metric(alpha, beta, 0.0)
+                score = met.calculate_final_metric(alpha, beta)
                 for bin_idx in range(post_chunk):
                     mask = np.array([in_bin(p, bin_idx)
                                      for p in get_reference(met)], dtype=bool)
@@ -698,8 +723,6 @@ class VisTool():
                 s = np.array([temp_results[seed][bin_idx] for seed in range(len(temp_results))], dtype=float)
                 err_results[i][bin_idx] = float(np.nanstd(s, ddof=1)) if s.size >= 2 else 0.0
 
-
-        # compute some helpers first
         x = np.arange(post_chunk)
         bar_width = 0.8 / num_models
         avg_final_metrics = [sum(ls) / len(ls) for ls in final_metrics]
@@ -720,7 +743,7 @@ class VisTool():
 
         def _plot_on_axis(ax):
             for i in range(num_models):
-                if is_bin: # hatch=hatch_dict[models[i]],
+                if is_bin:
                     ax.bar(
                         x + i * bar_width,
                         [final_results[i][bar_idx] for bar_idx in range(post_chunk)],
@@ -741,7 +764,7 @@ class VisTool():
                         [final_results[i][bar_idx] for bar_idx in range(chunk)],
                         yerr=[err_results[i][bar_idx] for bar_idx in range(chunk)],
                         fmt='none',
-                        ecolor='black',  # match line color
+                        ecolor='black',
                         elinewidth=1,
                         capsize=3,
                         zorder=4
@@ -816,8 +839,6 @@ class VisTool():
             ax.set_ylabel('MRR', fontsize=axis_font, labelpad=2)
             ax.tick_params(axis='x', pad=2)
 
-         
-
         model_strs = '_'.join(models)
         os.makedirs(f'../figs/fig2_obs2/{mode}', exist_ok=True)
         fig.savefig(f'../figs/fig2_obs2/{mode}/{dataset}_{mode}bar_{ref}_{view}_{model_strs}.{format}', bbox_inches='tight', pad_inches=0.01)
@@ -828,19 +849,20 @@ class VisTool():
         if p < 5e-2: return "*"
         return f"n.s."
 
-    def draw_for_table(self, mets: List[List[PROBE]], alpha, beta, gamma, target='a', figw=2, figh=1.5):
+    def draw_for_table(self, mets: List[List[PROBE]], alpha, beta, gamma=None, target='a', figw=2, figh=1.5):
         data = mets[0][0].data
 
-
-        ret_dict = {'a':alpha, 'b':beta, 'g':gamma}
-        name_dict = {'a': 'alpha', 'b': 'beta', 'g': 'gamma'}
+        if target not in ('a', 'b'):
+            raise ValueError('Table target must be alpha (a) or beta (b)')
+        ret_dict = {'a': alpha, 'b': beta}
+        name_dict = {'a': 'alpha', 'b': 'beta'}
 
         colors = {_mets[0].model: self.mods[_mets[0].model] for _mets in mets}
 
         model_results = {}
         for _mets in mets:
             model_name = _mets[0].model
-            scores = [met.calculate_final_metric(alpha, beta, gamma) for met in _mets]
+            scores = [met.calculate_final_metric(alpha, beta) for met in _mets]
             model_results[model_name] = scores
 
         model_names = list(model_results.keys())
@@ -891,7 +913,6 @@ class VisTool():
                 lbl.set_horizontalalignment('left') 
                 lbl.set_verticalalignment('center')
 
-
             ax1.set_xticks(xs)
             ax1.set_xticklabels([])
             ax1.set_xlim(0, 1)
@@ -939,74 +960,186 @@ class VisTool():
             fig1.savefig(title, bbox_inches='tight', pad_inches=0.001)
 
             print(f'{data} : {model_names}; {label} | {name_m0 if mean_m0 > mean_m1 else name_m1}')
- 
 
+    def write_tables(self, mets: List[List[PROBE]], alphas, betas, gammas=None, mode='a'):
+        """Update a dataset's results and rebuild a complete LaTeX table.
 
-    def write_tables(self, mets: List[List[PROBE]], alphas, betas, gammas, mode='a'):
-        models = [met[0].model for met in mets]
+        Modes a/b write table4/table5.tex under ../figs/table4/table5.
+        A JSON sidecar keeps results across dataset runs; delete it to start over.
+        The LaTeX document needs booktabs, multirow, xcolor (table), the
+        rank1, rank2, ... colors, and the \\method macro used in the caption.
+        """
+        if mode not in ('a', 'b'):
+            raise ValueError(f'Not supported mode name: {mode}')
+        if not mets or any(not runs for runs in mets):
+            raise ValueError('Each model must have at least one metric run.')
+
         data = mets[0][0].data
+
         match mode:
-            case 'a': piv_ls, other = betas, alphas
-            case 'b': piv_ls, other = alphas, betas
-            case 'g': piv_ls, other = alphas, gammas
+            case 'a':
+                piv_ls, other = betas, alphas
+            case 'b':
+                piv_ls, other = alphas, betas
+
+        if not len(piv_ls) or not len(other):
+            raise ValueError('Table parameter lists must not be empty.')
 
         latex = defaultdict(str)
 
-        for p_idx, piv in enumerate(piv_ls):
+        for piv in piv_ls:
             results = [[] for _ in range(len(other))]
-            colors = [self.mods[_mets[0].model] for _mets in mets]
 
             all_mean_y = []
 
-            raw_model_scores = []  
-            for idx, _mets in enumerate(mets):
+            for _mets in mets:
                 calculated_metrics = []
+
                 for met in _mets:
                     if mode == 'a':
-                        values = [met.calculate_final_metric(alpha, piv, 0.0) for alpha in alphas]
+                        values = [
+                            met.calculate_final_metric(alpha, piv)
+                            for alpha in alphas
+                        ]
                     elif mode == 'b':
-                        values = [met.calculate_final_metric(piv, beta, 0.0) for beta in betas]
-                    elif mode == 'g':
-                        values = [met.calculate_final_metric(piv, 0.0, gamma) for gamma in gammas]
+                        values = [
+                            met.calculate_final_metric(piv, beta)
+                            for beta in betas
+                        ]
+
                     calculated_metrics.append(values)
 
                 calculated_metrics = np.array(calculated_metrics)
+
                 mean_y = np.mean(calculated_metrics, axis=0)
                 std_y = np.std(calculated_metrics, axis=0)
+
                 all_mean_y.append((mean_y, std_y))
-                raw_model_scores.append(mean_y)
 
             for idx, (mean_y, std_y) in enumerate(all_mean_y):
-                norm_y = raw_model_scores[idx]
                 for i in range(len(other)):
-                    results[i].append((mets[idx][0].model, round(norm_y[i], 4)))
+                    results[i].append(
+                        (
+                            mets[idx][0].model,
+                            round(mean_y[i], 4),
+                            round(std_y[i], 4)
+                        )
+                    )
 
             for i, ls in enumerate(results):
                 ls = sorted(ls, key=lambda x: x[1], reverse=True)
 
-                for rank, (model, score) in enumerate(ls):
-                    rank = rank + 1
+                for rank, (model, score, std) in enumerate(ls):
+                    rank += 1
+
                     color_style = f'\\cellcolor{{rank{rank}}}'
 
-                    latex[model] += f' & {color_style}{{{score:.4f}}}'
+                    latex[model] += (
+                        f' & {color_style}'
+                        f'{{{score * 100:.2f}{{\\tiny\color{{gray}}$\\pm${std * 100:.2f}}}}}'
+                    )
 
-        if mode == 'a':
-            folder_name = 'table4'
-        elif mode == 'b':
-            folder_name = 'table5'
+        folder_name = 'table4' if mode == 'a' else 'table5'
+        folder = f'../figs/{folder_name}'
+        os.makedirs(folder, exist_ok=True)
+        cache_path = f'{folder}/{folder_name}.json'
+        if os.path.exists(cache_path):
+            with open(cache_path) as f:
+                tables = json.load(f)
         else:
-            print(f'Not supported mode name: {mode}')
-            return
-        
-        os.makedirs(f'../figs/{folder_name}', exist_ok=True)
-        for model in models:
-            txt_name = f'{model}_tables_{mode}.txt'
-            if not os.path.exists(f'../figs/{folder_name}/{txt_name}'):
-                with open(f'../figs/{folder_name}/{txt_name}', 'w') as f:
-                    f.write(model)
-            with open(f'../figs/{folder_name}/{txt_name}', 'a') as f:
-                f.write(''.join(latex[model]) + '\n')
+            tables = {}
 
+        parameter = 'alpha' if mode == 'a' else 'beta'
+        pivot_parameter = 'beta' if mode == 'a' else 'alpha'
+        columns = []
+        for piv in piv_ls:
+            for value in other:
+                label = fr'$\{parameter}$={value:.1f}'
+                if len(piv_ls) > 1:
+                    label += fr', $\{pivot_parameter}$={piv:.1f}'
+                columns.append(label)
+        tables[data] = {
+            'columns': columns, 'rows': dict(latex),
+            'epsilon_reference': 'train',
+            'epsilon_entity': mets[0][0].epsilon_entity,
+            'epsilon_relation': mets[0][0].epsilon_relation,
+        }
+        with open(cache_path, 'w') as f:
+            json.dump(tables, f, indent=2)
+
+        dataset_labels = {
+            'FB15k237': 'FB15k-237', 'wn18rr': 'WN18RR',
+            'YAGO3-10': 'YAGO3-10', 'family': 'Family',
+            'umls': 'UMLS', 'kinship': 'Kinship',
+        }
+        datasets = [name for name in dataset_labels if name in tables]
+        datasets.extend(name for name in tables if name not in dataset_labels)
+        # Use the established model order, then any additional models.
+        table_models = [name for name in self.mods
+                        if any(name in table['rows'] for table in tables.values())]
+        for table in tables.values():
+            for model in table['rows']:
+                if model not in table_models:
+                    table_models.append(model)
+
+        def escape_label(value):
+            replacements = {
+                '\\': r'\textbackslash{}', '&': r'\&', '%': r'\%',
+                '$': r'\$', '#': r'\#', '_': r'\_', '{': r'\{',
+                '}': r'\}', '~': r'\textasciitilde{}', '^': r'\textasciicircum{}',
+            }
+            return ''.join(replacements.get(char, char) for char in value)
+
+        aspect = 'rank sensitivity' if mode == 'a' else 'popularity-bias robustness'
+        lines = [
+            r'\begin{table}[ht]', r'\centering', r'\footnotesize',
+            fr'\caption{{The accuracy of KGC Models evaluated by {{\method}} '
+            fr'with varying levels of {aspect} $\{parameter}$. '
+            r'The \textcolor[HTML]{F8A602}{gold}, '
+            r'\textcolor[HTML]{A5A5B1}{silver}, and '
+            r'\textcolor[HTML]{D36A49}{bronze} indicate the best, '
+            r'the second, and the third best results, respectively.}',
+            r'\vspace{-3mm}', r'\setlength{\tabcolsep}{0.3pt}',
+        ]
+        for start in range(0, len(datasets), 3):
+            group = datasets[start:start + 3]
+            widths = [len(tables[name]['columns']) for name in group]
+            spec = 'l ' + ' | '.join('c' * width for width in widths)
+            lines.append('\\resizebox{\\textwidth}{!}{')
+            lines.append(fr'\begin{{tabular}}{{{spec}}}')
+            if start == 0:
+                lines.extend([r'\toprule', r'\toprule'])
+            headers = [r'\multirow{2}{*}{Models}']
+            headers.extend(
+                fr'\multicolumn{{{width}}}{{c}}{{{escape_label(dataset_labels.get(name, name))}}}'
+                for name, width in zip(group, widths)
+            )
+            lines.append(' & '.join(headers) + r'\\')
+            lines.append(fr'\cmidrule(lr){{2-{1 + sum(widths)}}}')
+            columns = [column for name in group for column in tables[name]['columns']]
+            lines.append(' & ' + ' & '.join(columns) + r'\\')
+            lines.append(r'\midrule')
+            for model in table_models:
+                lines.append(escape_label(model))
+                for name, width in zip(group, widths):
+                    row = tables[name]['rows'].get(model)
+                    if row is None:
+                        # The batch runner omits this model after running out of memory.
+                        missing = 'OOM' if model == 'RNNLogic' and name == 'YAGO3-10' else '--'
+                        row = (' & ' + missing) * width
+                    lines.append(row)
+                lines.append(r'\\')
+            lines.append(r'\bottomrule')
+            if start + 3 >= len(datasets):
+                lines.append(r'\bottomrule')
+            lines.append(r'\end{tabular}')
+            lines.append('}')
+            lines.append('')
+        lines.extend([fr'\label{{table:{folder_name}}}', r'\end{table}'])
+        tex_path = f'{folder}/{folder_name}.tex'
+        with open(tex_path, 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+        return tex_path
 
     def draw_rank_cluster_hist(
             self,
@@ -1180,9 +1313,6 @@ class VisTool():
         if self.data == 'FB15k237': plt.yticks([2000,4000,8000],['2k','4k','8k'])
         else: plt.yticks([1000,2000,4000],['1k','2k','4k'])
         ax.tick_params(axis='y', which='both', left=False, labelleft=True, labelsize=axis_font)
-        #ax.set_xticklabels(x_labels, rotation=45, fontsize=10)
-        # if cut_last: ax.set_xticklabels(['1st','2nd~5th','6th~20th','21st~50th','51st~100th','101st~200th'], fontsize=15, rotation=24)
-        # else: ax.set_xticklabels(['1st','2nd~5th','6th~20th','21st~50th','51st~100th','101st~200th','Others'], fontsize=15)
         xtick_labels = []
         for i, cut in enumerate(cuts):
             if i == len(cuts) - 1: break
@@ -1190,12 +1320,6 @@ class VisTool():
             else:
                 if cuts[-1] == cuts[i + 1]: xtick_labels.append(f'{cut}-{cuts[i + 1]}')
                 else: xtick_labels.append(f'{cut}-{cuts[i + 1] - 1}')
-        # if cut_last and len(cuts) == 6:
-        #     #ax.set_xticklabels(['1st','2nd-5th','6th-20th','21st-50th','51st-100th'], fontsize=axis_font)
-        #     ax.set_xticklabels(['1', '2-5', '6-20', '21-50', '51-100'], fontsize=axis_font)
-        # elif cut_last and len(cuts) == 7: ax.set_xticklabels(['1', '2-5', '6-20', '21-50', '51-100', '101-200'], fontsize=axis_font)
-        # else:
-        #     #ax.set_xticklabels(['1st','2nd~5th','6th~20th','21st~50th','51st~100th','101st~200th','Others'], fontsize=axis_font)
         ax.set_xticklabels(xtick_labels,
                            fontsize=axis_font)
         if xlabel: ax.set_xlabel('Rank', fontsize=axis_font, labelpad=0)
@@ -1214,6 +1338,7 @@ class VisTool():
         def probe(vec: Vector, a, b, E, eps):
             N_coeff = (1 / E) ** a
             transformed_ranks = ((1 / vec.v) ** a - N_coeff) / (1 - N_coeff)
+            print(f'{vec.color}: a:{a}, b:{b}, tr:{transformed_ranks}')
             sep_transformed_ranks = np.array([transformed_ranks[:split].mean(), transformed_ranks[split:].mean()])
 
             EW = 1 / (eps + vec.epop) ** b
@@ -1226,21 +1351,21 @@ class VisTool():
 
             W = norm_EW * norm_RW
             norm_W = W / np.sum(W)
+            print(f'{norm_W}')
             sep_norm_W = np.array([norm_W[:split].sum(), norm_W[split:].sum()])
             return sep_transformed_ranks, sep_norm_W, np.dot(transformed_ranks, norm_W)
 
-
         dim_alpha = 0.3
-        if a == 1 and b == 0: # base case
+        if a == 1 and b == 0:
             bt_alpha = 1.0
             bw_alpha = 1.0
-        elif b == 0: # less pred sharp
+        elif b == 0:
             bt_alpha = dim_alpha
             bw_alpha = 1.0
-        elif a == 1: # pop robust
+        elif a == 1:
             bt_alpha = 1.0
             bw_alpha = dim_alpha
-        else: # both
+        else:
             bt_alpha = dim_alpha
             bw_alpha = dim_alpha
 
@@ -1311,13 +1436,11 @@ class VisTool():
 
     @staticmethod
     def draw_vectors():
-        plt.rcParams['font.family'] = 'serif'
-        plt.rcParams['font.serif'] = ['Times New Roman']
         we = [0.5, 0.5, 0.1]
         wr = [0.8, 0.8, 0.25]
-        A = Vector(np.array([1, 2, 300]), np.array(we), np.array(wr), '#DE0005') # red
-        B = Vector(np.array([2, 3, 10]), np.array(we), np.array(wr), '#3F991F') # blue
-        C = Vector(np.array([4, 4, 5]), np.array(we), np.array(wr),'#002ADE') # green
+        A = Vector(np.array([1, 2, 300]), np.array(we), np.array(wr), '#DE0005')
+        B = Vector(np.array([2, 3, 10]), np.array(we), np.array(wr), '#3F991F')
+        C = Vector(np.array([4, 4, 5]), np.array(we), np.array(wr),'#002ADE')
 
         vs = [A, B, C]
 
@@ -1325,7 +1448,7 @@ class VisTool():
             VisTool.draw_vector_custom(vs, a, b, 1000, 1e-5, split=2)
 
     @staticmethod
-    def draw_owa():
+    def draw_owa(data_dir='../data/owa', output_dir='../figs/fig12', metrics=None):
 
         def draw_rank_change_box(
                 ax,
@@ -1401,7 +1524,6 @@ class VisTool():
             # Convert horizontal gap from pixels to axes coordinates
             gap_w = square_gap_px / bbox.width
 
-            # Total width occupied by all squares and gaps
             total_square_w = n * sq_w + (n - 1) * gap_w
             content_w = content_right - content_left
 
@@ -1524,209 +1646,287 @@ class VisTool():
                     clip_on=False
                 ))
                 
-        def change_metric_name(name):
-            if 'PROBE' in name: return metric.replace('a=', r"$\alpha$=")
-            if 'HITS' in name: return name
-            if name == 'sqrt': return '0.5-MRR'
-            if name == 'MRR': return '1.0-MRR'
-            if name == 'log': return 'log-MRR'
-            a, b = int(name[1]), int(name[-1])
-            p = round(a/b, 2)
-            return f'{p}-MRR'
-
-        model_wise_colors = {'RotatE1':'#073B4C',
-                           'RotatE2':'#009999',
-                           'RotatE3':'#6062B8',
-                           'RotatE4':'#0099FF',
-                           'RotatE5':'#2149C9',
-                           'ComplEx1':'#996633',
-                           'ComplEx2':'#808000',
-                           'ComplEx3':'#FF9900',
-                           'ComplEx4':'#A50021',
-                           'ComplEx5':'#CCCC00',}
-
-        met_wise_colors = {'MRR':'#000000',
-                            'log':'#5F5F5F',
-                            'sqrt':'#9E9E9E',
-                            'P1_4':'#18186F',
-                            'P1_3':'#0000CC',
-                            'P2_3':'#6394EC',
-                            'P3_4':'#00BFBF',
-                            'HITS1':'#9F512C',
-                            'HITS3':'#7F7F00',
-                            'HITS10':'#BFBF00',
-                            'PROBE(a=-1.0)':'#660033',
-                            'PROBE(a=-0.5)':'#CC0066',
-                            'PROBE(a=0.0)':'#FF0066',
-                            'PROBE(a=0.5)':'#FF6600',
-                            'PROBE(a=1.0)':'#FF9933',
-                            'PROBE(a=2.0)':'#FFCC00',}
-
+        histories, metrics = load_owa_histories(data_dir, metrics)
+        model_order = list(OWA_MODEL_COLORS)
         fontsize = 8
-
-        files = os.listdir(f'../data/owa')
-        owa_model_ls = defaultdict(list)
-        owa_metric_ls = dict()
-        model_order = []
-        plt.rcParams['font.family'] = 'serif'
-        plt.rcParams['font.serif'] = ['Times New Roman']
-        best = None
-        folder_plot = f'../figs/fig12/plot'
+        tick_fontsize = 6
+        axis_label_fontsize = 7
+        box_fontsize = 7
+        folder_plot = os.path.join(output_dir, 'plot')
+        folder_box = os.path.join(output_dir, 'box')
         os.makedirs(folder_plot, exist_ok=True)
-        folder_box = f'../figs/fig12/box'
         os.makedirs(folder_box, exist_ok=True)
-
-        for file in files:
-
-            model = file.split('.')[0]
-            model_order.append(model)
-
-            with open(os.path.join('../data/owa', file), 'r') as f:
-                temp = json.load(f)
-
-            for metric, ls in temp.items():
-                owa_model_ls[metric].append(ls)
-
-            if file == 'RotatE1.json':
-                for metric, ls in temp.items():
-                    owa_metric_ls[metric] = ls
-
-        # metric wise
-        for metric, ls in owa_model_ls.items():
-            model_full_test = list()
-            model_sparse_test = list()
-
-            x_max = 0
-            x_min = 1
-            y_max = 0
-            y_min = 1
-            
-            fig_w, fig_h = 2, 1.5
-            fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-            fig_box, ax_box = plt.subplots(figsize=(fig_w, 0.4 * fig_h)) 
-            
-
-            for model, _ls in zip(model_order, ls):
-                x, y = [], []
-                _ls = sorted(_ls, key=lambda x:x[0])
-                for xy in _ls:
-                    x.append(xy[0])
-                    y.append(xy[1])
-                ax.plot(x, y, color=model_wise_colors[model], linewidth=0.5)
-                max_full, max_sparse = max(_ls, key=lambda x:x[1])
-                model_full_test.append(round(max_full, 6))
-                model_sparse_test.append(round(max_sparse, 6))
-                _max = max(x) if max(x) > x_max else x_max
-                x_min = min(x) if min(x) < x_min else x_min
-                y_max = max(y) if max(y) > y_max else y_max
-                y_min = min(y) if min(y) < y_min else y_min
-
-            sort_kind = 'mergesort'
-            full_sort_idx = np.argsort(-np.array(model_full_test), kind=sort_kind)
-            sparse_sort_idx = np.argsort(-np.array(model_sparse_test), kind=sort_kind)
-            
-            cx = Counter(model_full_test)
-            cx = dict(sorted(cx.items(), reverse=True))
-            new = []
-            for f_val, cnt in cx.items():
-                target_idxs = set([i for i, s in enumerate(model_full_test) if s == f_val])
-                assert cnt == len(target_idxs)
-                target_sparse_order = [i for i in sparse_sort_idx if (i in target_idxs)]
-                new.extend(target_sparse_order)
-            full_sort_idx = new
-            
-            ### box plot first
+        summary = {}
+        for metric in metrics:
+            selected_full, selected_sparse, selections = [], [], {}
+            x_values, y_values = [], []
+            fig, ax = plt.subplots(figsize=(2, 1.5))
+            fig_box, ax_box = plt.subplots(figsize=(2, 0.6))
+            for model in model_order:
+                pairs = histories[model][metric]
+                order = np.argsort(pairs[:, 0], kind='mergesort')
+                ax.plot(pairs[order, 0], pairs[order, 1], color=OWA_MODEL_COLORS[model], linewidth=0.5)
+                # Select the same evaluation by sparse score for both split rankings.
+                best = int(np.argmax(pairs[:, 1]))
+                full, sparse = map(float, pairs[best])
+                selected_full.append(full)
+                selected_sparse.append(sparse)
+                steps, _ = owa_training_steps(data_dir, model, len(pairs))
+                selections[model] = {'evaluation_index': best, 'step': int(steps[best]),
+                                     'full': full, 'sparse': sparse}
+                x_values.extend(pairs[:, 0])
+                y_values.extend(pairs[:, 1])
+            full_sort_idx = np.argsort(-np.asarray(selected_full), kind='mergesort')
+            sparse_sort_idx = np.argsort(-np.asarray(selected_sparse), kind='mergesort')
+            # Average ranks retain score ties instead of breaking them using the other split.
+            full_ranks = rankdata(-np.asarray(selected_full), method='average')
+            sparse_ranks = rankdata(-np.asarray(selected_sparse), method='average')
+            tau, tau_p = kendalltau(sparse_ranks, full_ranks)
+            rho, rho_p = spearmanr(sparse_ranks, full_ranks)
+            print("%s: Kendall's coefficient=%.4f, Spearman's coefficient=%.4f" % (metric, tau, rho))
+            summary[metric] = {
+                'selection': 'maximum sparse score; first evaluation wins exact ties',
+                'selected_models': selections,
+                'full_order': [model_order[i] for i in full_sort_idx],
+                'sparse_order': [model_order[i] for i in sparse_sort_idx],
+                'kendall_tau': float(tau) if np.isfinite(tau) else None,
+                'spearman_rho': float(rho) if np.isfinite(rho) else None,
+                'kendall_p': float(tau_p) if np.isfinite(tau_p) else None,
+                'spearman_p': float(rho_p) if np.isfinite(rho_p) else None,
+            }
             draw_rank_change_box(
-                ax=ax_box,
-                top_indices=sparse_sort_idx,
-                bottom_indices=full_sort_idx,
-                model_order=model_order,
-                model_wise_colors=model_wise_colors,
-                top_label   ="sparse",
-                bottom_label="full  ",
-
-                content_left=0.30,
-                content_right=0.96,
-
-                top_row_y=0.72,
-                bottom_row_y=0.28,
-
-                label_x=0.04,
-                
-                square_size_px=10,
-                square_gap_px=0.2,
-
-                show_numbers=True,
-                number_start=1,
-                number_fontsize=fontsize,
-                number_color="white",
-                number_fontweight='normal',
-                
-                fontsize=fontsize*0.9
-            )
-            
-            
-            
-            fig_box.savefig(os.path.join(folder_box, f'{metric}_box.pdf'), dpi=300, bbox_inches='tight', pad_inches=0.01)
-            
-            ### end of box plot
-
-            if max_sparse > 0.4: ax.set_yticks([round(i*0.2, 1) for i in range(6)])
-            else: ax.set_yticks([0.0, 0.1, 0.2, 0.3, 0.4])
-            
-            replace_name = change_metric_name(metric)
-            ax.tick_params(axis='both', labelsize=fontsize)
-            ax.plot([0, 1], [0, 1], color='grey', ls='--', lw=2, alpha=0.5, label='ideal')
-            
-            ax.set_xlim(0.0 if x_min < 0.05 else x_min, 1.04)
-            ax.set_ylim(0.0 if y_min < 0.05 else y_min, 1.02 if y_max >= 0.94 else y_max + 0.01)
-            
+                ax=ax_box, top_indices=sparse_sort_idx, bottom_indices=full_sort_idx,
+                model_order=model_order, model_wise_colors=OWA_MODEL_COLORS,
+                top_label='sparse', bottom_label='full  ',
+                content_left=0.30, content_right=0.96, top_row_y=0.72, bottom_row_y=0.28,
+                label_x=0.04, square_size_px=10, square_gap_px=0.2, show_numbers=True,
+                number_start=1, number_fontsize=box_fontsize, number_color='white',
+                number_fontweight='normal', fontsize=box_fontsize*0.9)
+            fig_box.savefig(os.path.join(folder_box, metric + '_box.pdf'), dpi=300,
+                            bbox_inches='tight', pad_inches=0.01)
+            xmin, xmax = float(min(x_values)), float(max(x_values))
+            ymin, ymax = float(min(y_values)), float(max(y_values))
+            if metric in METRIC_NAMES:
+                xpad = max((xmax - xmin)*0.04, abs(xmax)*0.01, 1e-8)
+                ypad = max((ymax - ymin)*0.04, abs(ymax)*0.01, 1e-8)
+                ax.set_xlim(xmin - xpad, xmax + xpad)
+                if metric in ('AMRI', 'WMR_BAR'):
+                    ax.set_xlim(right=1.05)
+                ax.set_ylim(ymin - ypad, ymax + ypad)
+                ax.xaxis.set_major_locator(
+                    MultipleLocator(0.2) if metric in ('AMRI', 'WMR_BAR') else MaxNLocator(nbins=4))
+                ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+                for axis in (ax.xaxis, ax.yaxis):
+                    formatter = ScalarFormatter(useMathText=True)
+                    formatter.set_powerlimits((-2, 3))
+                    axis.set_major_formatter(formatter)
+                    axis.get_offset_text().set_fontsize(tick_fontsize)
+            else:
+                ax.set_yticks([round(i*0.2, 1) for i in range(6)] if ymax > 0.4 else [0, 0.1, 0.2, 0.3, 0.4])
+                ax.set_xlim(0.0 if xmin < 0.05 else xmin, 1.04)
+                ax.set_ylim(0.0 if ymin < 0.05 else ymin, 1.02 if ymax >= 0.94 else ymax + 0.01)
+            low, high = min(xmin, ymin), max(xmax, ymax)
+            ax.plot([low, high], [low, high], color='grey', ls='--', lw=2, alpha=0.5, label='ideal')
             if metric == 'MRR':
                 ax.legend(loc='lower right')
-            else:
-                pass
-            ax.set_xlabel(f'{replace_name} (full test set)', fontsize=fontsize)
-            ax.set_ylabel(f'{replace_name} (sparse test set)', fontsize=fontsize)
-            
-            ax.set_title(f'{replace_name}', fontsize=fontsize)
+            label = owa_metric_label(metric)
+            ax.tick_params(axis='both', labelsize=tick_fontsize)
+            ax.set_xlabel('%s (full test set)' % label, fontsize=axis_label_fontsize)
+            ax.set_ylabel('%s (sparse test set)' % label, fontsize=axis_label_fontsize)
+            ax.set_title(label, fontsize=fontsize)
             ax.grid(True, which='both', linestyle='-', linewidth=0.3, color='grey', alpha=0.5)
-
-            fig.savefig(os.path.join(folder_plot, f'{metric}.pdf'), dpi=300, bbox_inches='tight', pad_inches=0.01)
-            
+            if metric in METRIC_NAMES:
+                fig.canvas.draw()
+                xoffset = ax.xaxis.get_offset_text().get_text()
+                yoffset = ax.yaxis.get_offset_text().get_text()
+                if xoffset and xoffset == yoffset:
+                    # Keep scientific scale notes inside the panel so its frame matches other metrics.
+                    ax.xaxis.get_offset_text().set_visible(False)
+                    ax.yaxis.get_offset_text().set_visible(False)
+                    ax.text(0.96, 0.04, '%s (both axes)' % xoffset,
+                            transform=ax.transAxes, ha='right', va='bottom', fontsize=fontsize - 1,
+                            bbox={'facecolor': 'white', 'edgecolor': 'none', 'alpha': 0.9, 'pad': 1})
+                elif xoffset:
+                    ax.xaxis.get_offset_text().set_visible(False)
+                    ax.set_xlabel('%s (full test set)\n%s' % (label, xoffset), fontsize=axis_label_fontsize)
+            fig.savefig(os.path.join(folder_plot, metric + '.pdf'), dpi=300,
+                        bbox_inches='tight', pad_inches=0.01)
             plt.close(fig)
             plt.close(fig_box)
-        
-        return
-        linestyle_ls = {'MRR':'-.',
-                        'log':'-.',
-                        'sqrt':'-.',
-                        'P1_4':':',
-                        'P1_3':':',
-                        'P2_3':':',
-                        'P3_4':':',
-                        'HITS1':'--',
-                        'HITS3':'--',
-                        'HITS10':'--',
-                        'PROBE(a=-1.0)':'-',
-                        'PROBE(a=-0.5)':'-',
-                        'PROBE(a=0.0)':'-',
-                        'PROBE(a=0.5)':'-',
-                        'PROBE(a=1.0)':'-',
-                        'PROBE(a=2.0)':'-',}
-        fig, ax = plt.subplots(figsize=(5,4))
-        for idx, (metric, ls) in enumerate(owa_metric_ls.items()):
-            x, y = [], []
-            ls = sorted(ls, key=lambda x: x[0])
-            for xy in ls:
-                x.append(xy[0])
-                y.append(xy[1])
-            ax.plot(x, y, label=metric, color=met_wise_colors[metric], linewidth=1.5, linestyle=linestyle_ls[metric], alpha=1.0 if 'PROBE' in metric else 1)
-        ax.legend(fontsize=6.5)
-        plt.xlim(0, 1.02)
-        plt.ylim(0, 1.02)
-        plt.xlabel('(full test set)', fontsize=fontsize)
-        plt.ylabel('(sparse test set)', fontsize=fontsize)
-        fig.savefig(f'../figs/fig12/metric_wise.pdf', bbox_inches='tight', pad_inches=0.01)
+        from owa_history import write_json
+        write_json(os.path.join(output_dir, 'summary.json'), summary)
+        return summary
+
+    @staticmethod
+    def reb_m8(output_dir=None, from_json=None):
+        """Write the six-dataset epsilon-scale correlation table (raw Spearman rho)."""
+        from reb_m8 import create_table
+        return create_table(output_dir=output_dir, from_json=from_json)
+
+    rebm8 = reb_m8
+
+    @staticmethod
+    def reb_m14(data_dir='../data/owa', output_dir='../figs/m14', metric='PROBE(a=-0.5)', yscale='auto'):
+        """Plot full-test histories at their actual training steps, allowing signed metrics."""
+        histories, _ = load_owa_histories(data_dir, [metric])
+        fig, ax = plt.subplots(figsize=(6, 4))
+        summary = {}
+        full_values = []
+        xlabel = 'Evaluation step'
+        for model, color in OWA_MODEL_COLORS.items():
+            pairs = histories[model][metric]
+            full_test, sparse_test = pairs[:, 0], pairs[:, 1]
+            steps, xlabel = owa_training_steps(data_dir, model, len(pairs))
+            sparse_min_idx, sparse_max_idx = int(np.argmin(sparse_test)), int(np.argmax(sparse_test))
+            summary[model] = {
+                'sparse_min': float(sparse_test[sparse_min_idx]),
+                'sparse_max': float(sparse_test[sparse_max_idx]),
+                'full_at_sparse_min': float(full_test[sparse_min_idx]),
+                'full_at_sparse_max': float(full_test[sparse_max_idx]),
+                'step_at_sparse_min': int(steps[sparse_min_idx]),
+                'step_at_sparse_max': int(steps[sparse_max_idx]),
+                'final_full': float(full_test[-1]), 'final_sparse': float(sparse_test[-1]),
+            }
+            print('%s %s: sparse min=%.6g, max=%.6g; corresponding full=%.6g, %.6g' %
+                  (metric, model, summary[model]['sparse_min'], summary[model]['sparse_max'],
+                   summary[model]['full_at_sparse_min'], summary[model]['full_at_sparse_max']))
+            ax.plot(steps, full_test, color=color, linewidth=1.5, label=model)
+            full_values.extend(full_test)
+        if yscale == 'auto':
+            yscale = 'log' if min(full_values) > 0 else 'symlog'
+        if yscale == 'log' and min(full_values) <= 0:
+            plt.close(fig)
+            raise ValueError('Non-positive values cannot be shown on a log scale')
+        if yscale == 'symlog':
+            threshold = 1.0 if metric == 'ZMRR' else 0.01
+            ax.set_yscale(yscale, linthresh=threshold)
+        else:
+            ax.set_yscale(yscale)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(owa_metric_label(metric))
+        ax.grid(True, which='both', linewidth=0.4, color='grey', alpha=0.5)
+        ax.legend(ncol=2, fontsize=8, frameon=False)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        fig.tight_layout()
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, metric + '.pdf')
+        fig.savefig(output_path, dpi=300, bbox_inches='tight', pad_inches=0.01)
+        plt.close(fig)
+        from owa_history import write_json
+        write_json(os.path.join(output_dir, metric + '.summary.json'),
+                   {'metric': metric, 'yscale': yscale, 'models': summary})
+        return output_path
+
+    def draw_reb_m15c(self, mets: List[List[PROBE]], scales=None,
+                     output_dir='../figs/m15c', file_format='pdf'):
+        """Plot eight metrics against candidate-size scale with unchanged ranks.
+
+        Subtract each run's scale-1 score before computing model means and
+        sample standard deviation bands. Include scale 1 in custom sweeps.
+        Use a fixed valid cohort within each run for all scales; ranks
+        exceeding the smallest scaled set and singleton sets are excluded once.
+        Counts include the target: N_i = met.nentity - met.filtered[i].
+        Plot PROBE at alpha=1, 0.5, 0; 2/3-MRR and 1/3-MRR; ZMRR, WMR_BAR, AMRI.
+        Return the eight figure paths.
+        """
+        if not mets or any(not runs for runs in mets):
+            raise ValueError('`mets` must contain at least one run for every model')
+        scales = np.asarray(np.linspace(0.4, 1.6, 7) if scales is None else scales,
+                            dtype=float)
+        if (scales.ndim != 1 or not scales.size or not np.isfinite(scales).all()
+                or np.any(scales <= 0) or np.any(np.diff(scales) <= 0)):
+            raise ValueError('Scales must be finite, positive, and strictly increasing')
+        pivot_matches = np.isclose(scales, 1.0, rtol=1e-10, atol=1e-12)
+        scales = scales.copy()
+        scales[pivot_matches] = 1.0
+        scales = np.unique(np.append(scales, 1.0))
+        model_names = [runs[0].model for runs in mets]
+        if len(set(model_names)) != len(model_names):
+            raise ValueError('Each entry in `mets` must represent a different model')
+        summary = {'dataset': self.data, 'scales': scales.tolist(),
+                   'pivot_scale': 1.0, 'plotted_quantity': 'score_difference',
+                   'probe_alphas': [1.0, 0.5, 0.0], 'pmrr_powers': [2 / 3, 1 / 3],
+                   'beta': 0.0,
+                   'aggregation': 'answer', 'rounding': 'floor(scale * N + 0.5)',
+                   'cohort': 'Fixed per run; N >= 2 and rank <= N at every scale',
+                   'models': {}}
+        for model, runs in zip(model_names, mets):
+            run_results = []
+            for index, met in enumerate(runs):
+                if met.model != model or met.data != self.data:
+                    raise ValueError('All runs must match their model group and dataset')
+                result = candidate_size_sweep(met.rank, met.nentity - met.filtered, scales)
+                run_results.append(result)
+                print(f'M15c {self.data}/{model} run {index + 1}: '
+                      f"retained {result['retained_count']}/{result['record_count']} "
+                      f"records; excluded {result['excluded_count']}")
+            summary['models'][model] = {'runs': run_results}
+        return self._save_reb_m15c(summary, output_dir, file_format)
+
+    def _save_reb_m15c(self, summary, output_dir, file_format='pdf'):
+        """Center and render saved sweep scores without recalculating rank metrics."""
+        scales = np.asarray(summary['scales'], dtype=float)
+        pivot_matches = np.flatnonzero(np.isclose(scales, 1.0, rtol=1e-10, atol=1e-12))
+        if len(pivot_matches) != 1:
+            raise ValueError('The saved sweep must contain exactly one scale-1 pivot')
+        fs = 12 
+        pivot_index = int(pivot_matches[0])
+        scales[pivot_index] = 1.0
+        summary['scales'] = scales.tolist()
+        summary['pivot_scale'] = 1.0
+        summary['plotted_quantity'] = 'score_difference'
+        model_names = list(summary['models'])
+        metric_names = CANDIDATE_SWEEP_METRICS
+        for model_summary in summary['models'].values():
+            runs = model_summary['runs']
+            model_summary['metrics'] = {}
+            for run in runs:
+                run['baseline_scores'] = {
+                    metric: run['scores'][metric][pivot_index] for metric in metric_names}
+                run['differences'] = {
+                    metric: (np.asarray(run['scores'][metric])
+                             - run['baseline_scores'][metric]).tolist()
+                    for metric in metric_names}
+            for metric in metric_names:
+                values = np.asarray([run['differences'][metric] for run in runs])
+                mean = values.mean(axis=0)
+                std = values.std(axis=0, ddof=1) if len(runs) > 1 else np.zeros_like(mean)
+                model_summary['metrics'][metric] = {'mean': mean.tolist(), 'std': std.tolist()}
+
+        os.makedirs(output_dir, exist_ok=True)
+        saved_paths = []
+        for metric in metric_names:
+            fig, ax = plt.subplots(figsize=(4, 3))
+            for index, model in enumerate(model_names):
+                stats = summary['models'][model]['metrics'][metric]
+                mean, std = np.asarray(stats['mean']), np.asarray(stats['std'])
+                color = self.mods.get(model, OWA_MODEL_COLORS.get(model, plt.get_cmap('tab10')(index % 10)))
+                ax.plot(scales, mean, color=color, marker=self.markers.get(model, 'o'),
+                        markersize=4, linewidth=1.5, label=model)
+                ax.fill_between(scales, mean - std, mean + std, color=color, alpha=0.15)
+            ax.axvline(1.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.7)
+            ax.axhline(0.0, color='grey', linestyle='--', linewidth=0.8, alpha=0.7)
+            ax.set_xticks(scales)
+            ax.set_xticklabels([rf'{scale:.3g}$\times$' for scale in scales], fontsize=fs*0.9)
+            ax.set_xlabel('Candidate size scale (fixed ranks)', fontsize=fs)
+            ax.set_ylabel(r'Difference from $1\times$', fontsize=fs)
+            ax.set_title(f'{summary["dataset"]}({owa_metric_label(metric)})', fontsize=fs)
+            formatter = ScalarFormatter(useOffset=False, useMathText=False)
+            formatter.set_powerlimits((0, 0))
+            ax.yaxis.set_major_formatter(formatter)
+            ax.grid(axis='y', color='grey', alpha=0.7, linewidth=0.4)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.legend(ncol=2, fontsize=fs*0.8, frameon=False)
+            fig.tight_layout()
+            path = os.path.join(output_dir, f"{summary['dataset']}_{metric}.{file_format}")
+            try:
+                fig.savefig(path, dpi=300, bbox_inches='tight', pad_inches=0.01)
+            finally:
+                plt.close(fig)
+            saved_paths.append(path)
+        return saved_paths
 
     def fbdecode(self, id2e):
         assert self.data == 'FB15k237', f'This function can not be used in {self.data}'
@@ -1763,7 +1963,7 @@ class VisTool():
                 except (KeyError, ValueError):
                     continue
 
-                if syn is None:  # <-- important
+                if syn is None:
                     continue
 
                 names = syn.lemma_names()
@@ -1793,11 +1993,8 @@ class VisTool():
 
             G.add_node(h)
             G.add_node(t)
-            # store relation as edge label
             G.add_edge(h, t, label=r_name)
 
-        # 2. Layout
-        # after you finish building G
         center = eid
         others = [n for n in G.nodes() if n != center]
 
@@ -1813,10 +2010,10 @@ class VisTool():
         node_colors = []
         for n in nodes:
             if n == eid: 
-                node_sizes.append(500)  # larger
+                node_sizes.append(500)
                 node_colors.append(node_target_col)
             else:
-                node_sizes.append(200)  # default
+                node_sizes.append(200)
                 node_colors.append(node_default_col)
 
         edges = list(G.edges(data=True)) 
@@ -1842,8 +2039,6 @@ class VisTool():
         except:
             print('Div by zero')
 
-
-
         entity_font_size = 5
         relation_font_size = 4
 
@@ -1860,7 +2055,6 @@ class VisTool():
 
         y = 0.95  
         line_gap = 0.06 
-
 
         cnt = 0
         queries = []
@@ -1880,7 +2074,6 @@ class VisTool():
                 plt.close()
                 return
 
-
             text = f'{h}, {r}, {t} | {int(rw)}, {int(rl)}'
 
             queries.append(text)
@@ -1897,11 +2090,10 @@ class VisTool():
             else:
                 eval = 'bad'
 
-
         y -= line_gap
 
         def make_autopct(pie_keys, target_k):
-            idx = {"i": 0}  # mutable counter
+            idx = {"i": 0}
 
             def autopct(pct):
                 _rid = pie_keys[idx["i"]]
@@ -2158,3 +2350,1230 @@ class VisTool():
 
                 fig.savefig(os.path.join(new_path, filename), dpi=300, bbox_inches='tight', pad_inches=0.01)
                 plt.close(fig)
+
+    def reb_m9(self, mets: List[List[PROBE]], output_dir='../figs/m9/'):
+        """Plot the same beta-sweep diagnostics for base, clip, shrink, and log weights."""
+        met = mets[0][0]
+
+        betas = [0.0, 0.2, 0.4, 0.6, 0.8]
+
+        def create_figure():
+            # Reserve the same space for labels and end ticks in every panel.
+            fig, ax = plt.subplots(figsize=(4, 3), layout='none')
+            fig.subplots_adjust(left=0.25, right=0.95, bottom=0.22, top=0.92)
+            return fig, ax
+
+        pending_figures = []
+
+        def save_figure(fig, filename):
+            # Measure all panels before choosing their shared tight crop.
+            pending_figures.append((fig, filename))
+
+        def l1_normalize(weights):
+            weights = np.asarray(weights, dtype=float)
+
+            total = weights.sum()
+
+            if total <= 0:
+                raise ValueError("Weights must have a positive sum.")
+
+            return weights / total
+
+        def gini_coefficient(weights):
+            """
+            Gini coefficient of non-negative weights.
+
+            0 -> perfectly uniform
+            1 -> maximally concentrated
+            """
+            weights = np.asarray(weights, dtype=float)
+
+            if len(weights) == 0:
+                return np.nan
+
+            if np.any(weights < 0):
+                raise ValueError(
+                    "Gini coefficient requires non-negative weights."
+                )
+
+            total = weights.sum()
+
+            if total == 0:
+                return 0.0
+
+            x = np.sort(weights)
+            n = len(x)
+
+            index = np.arange(1, n + 1)
+
+            gini = (
+                2.0 * np.sum(index * x) / (n * total)
+                - (n + 1.0) / n
+            )
+
+            return gini
+
+        def kish_ess(weights):
+            """
+            Kish effective sample size:
+
+                ESS = (sum w)^2 / sum(w^2)
+
+            For L1-normalized weights:
+
+                ESS = 1 / sum(w^2)
+            """
+            weights = np.asarray(weights, dtype=float)
+
+            numerator = weights.sum() ** 2
+            denominator = np.sum(weights ** 2)
+
+            if denominator == 0:
+                return 0.0
+
+            return numerator / denominator
+
+        def top_mass(weights, fraction):
+            """
+            Fraction of total weight mass assigned to the
+            highest-weight `fraction` of queries.
+            """
+            weights = np.asarray(weights, dtype=float)
+
+            if len(weights) == 0:
+                return np.nan
+
+            sorted_weights = np.sort(weights)[::-1]
+
+            k = max(
+                1,
+                int(np.ceil(len(sorted_weights) * fraction))
+            )
+
+            total = sorted_weights.sum()
+
+            if total == 0:
+                return 0.0
+
+            return sorted_weights[:k].sum() / total
+
+        def lorenz_curve(weights):
+            """
+            x:
+                cumulative fraction of queries
+
+            y:
+                cumulative fraction of weight mass
+            """
+            weights = np.asarray(weights, dtype=float)
+
+            if np.any(weights < 0):
+                raise ValueError(
+                    "Lorenz curve requires non-negative weights."
+                )
+
+            sorted_weights = np.sort(weights)
+
+            total = sorted_weights.sum()
+
+            if total == 0:
+                cumulative_mass = np.zeros(len(sorted_weights))
+            else:
+                cumulative_mass = (
+                    np.cumsum(sorted_weights) / total
+                )
+
+            y = np.concatenate(
+                [[0.0], cumulative_mass]
+            )
+
+            x = np.linspace(
+                0.0,
+                1.0,
+                len(y),
+            )
+
+            return x, y
+
+        def clipping_weights(weights, percentile=99.0):
+            """
+            Hard clipping / winsorization.
+
+            The largest weights are capped at the specified
+            percentile, after which weights are L1-normalized.
+
+                w'_i = min(w_i, tau)
+
+            where tau is the percentile threshold.
+            """
+            weights = l1_normalize(weights)
+
+            threshold = np.percentile(
+                weights,
+                percentile,
+            )
+
+            modified = np.minimum(
+                weights,
+                threshold,
+            )
+
+            modified = l1_normalize(modified)
+
+            return modified, threshold
+
+        def shrinkage_weights(weights, lam=0.1):
+            """
+            Shrink popularity-aware weights toward uniform weights.
+
+                w'_i =
+                    (1-lambda) * w_i
+                    + lambda / N
+
+            lambda = 0:
+                original PROBE weights
+
+            lambda = 1:
+                completely uniform weights
+            """
+            weights = l1_normalize(weights)
+
+            n = len(weights)
+
+            uniform = np.full(
+                n,
+                1.0 / n,
+                dtype=float,
+            )
+
+            modified = (
+                (1.0 - lam) * weights
+                + lam * uniform
+            )
+
+            return l1_normalize(modified)
+
+        def logarithmic_weights(weights):
+            """
+            Logarithmic compression.
+
+            Since normalized weights themselves are very small,
+            applying log(1 + w) directly would barely change them.
+
+            Therefore express each weight relative to the
+            uniform-query weight:
+
+                relative_i = w_i / (1/N)
+                        = N * w_i
+
+            and compress:
+
+                w'_i ∝ log(1 + N*w_i)
+
+            This is dimensionless and independent of the
+            absolute scale of the raw weights.
+            """
+            weights = l1_normalize(weights)
+
+            n = len(weights)
+
+            relative_weights = n * weights
+
+            modified = np.log1p(
+                relative_weights
+            )
+
+            return l1_normalize(modified)
+
+        def temperature_weights(weights, temperature=2.0):
+            """
+            Temperature / power flattening.
+
+                w'_i ∝ w_i^(1/T)
+
+            T = 1:
+                original weights
+
+            T > 1:
+                flatter weights
+
+            For PROBE's inverse-power weighting this is
+            approximately equivalent to reducing beta from
+            beta to beta/T.
+            """
+            if temperature <= 0:
+                raise ValueError(
+                    "Temperature must be > 0."
+                )
+
+            weights = l1_normalize(weights)
+
+            modified = np.zeros_like(
+                weights,
+                dtype=float,
+            )
+
+            positive = weights > 0
+
+            # Divide by max first for numerical stability.
+            max_weight = weights[positive].max()
+
+            modified[positive] = (
+                weights[positive] / max_weight
+            ) ** (1.0 / temperature)
+
+            return l1_normalize(modified)
+
+        norm_weights = []
+
+        for b in betas:
+            # Concentration depends on the weight functions, not on rank scores.
+            met.set_entity_weight(b)
+            met.set_relation_weight(b)
+            weights = l1_normalize(
+                met.entity_raw_weights * met.relation_raw_weights
+            )
+            met.norm_W = weights.copy()
+
+            norm_weights.append(weights)
+
+        new_path = output_dir
+        os.makedirs(new_path, exist_ok=True)
+
+        def concentration_frame(weights_by_beta):
+            concentration_results = []
+
+            for b, weights in zip(
+                betas,
+                weights_by_beta,
+            ):
+                n = len(weights)
+
+                result = {
+                    'beta': b,
+                    'n_queries': n,
+
+                    'gini':
+                        gini_coefficient(weights),
+
+                    'kish_ess':
+                        kish_ess(weights),
+
+                    'ess_ratio':
+                        kish_ess(weights) / n,
+
+                    'top_1pct_mass':
+                        top_mass(weights, 0.01),
+
+                    'top_5pct_mass':
+                        top_mass(weights, 0.05),
+
+                    'top_10pct_mass':
+                        top_mass(weights, 0.10),
+
+                    'max_weight':
+                        np.max(weights),
+
+                    'median_weight':
+                        np.median(weights),
+
+                    'mean_weight':
+                        np.mean(weights),
+
+                    'min_weight':
+                        np.min(weights),
+
+                    'total_weight':
+                        np.sum(weights),
+                }
+
+                concentration_results.append(
+                    result
+                )
+
+            return pd.DataFrame(
+                concentration_results
+            )
+
+        concentration_df = concentration_frame(norm_weights)
+
+        print('\n' + '=' * 80)
+        print(
+            f'M9 Weight Concentration: {self.data}'
+        )
+        print('=' * 80)
+
+        print(
+            concentration_df[
+                [
+                    'beta',
+                    'gini',
+                    'kish_ess',
+                    'ess_ratio',
+                    'top_1pct_mass',
+                    'top_5pct_mass',
+                    'top_10pct_mass',
+                    'max_weight',
+                    'total_weight',
+                ]
+            ].to_string(
+                index=False,
+                float_format=lambda x: f'{x:.6f}'
+            )
+        )
+
+        print('=' * 80 + '\n')
+
+        weight_variants = {
+            'base': norm_weights,
+            'clip_99': [clipping_weights(weights, percentile=99.0)[0]
+                        for weights in norm_weights],
+            'shrink_0.1': [shrinkage_weights(weights, lam=0.1)
+                           for weights in norm_weights],
+            'log': [logarithmic_weights(weights) for weights in norm_weights],
+        }
+
+        def plot_weight_diagnostics(norm_weights, concentration_df, suffix=''):
+
+            fig, ax = create_figure()
+
+            for i, (b, weights) in enumerate(
+                zip(betas, norm_weights)
+            ):
+                sorted_weights = np.sort(
+                    weights
+                )[::-1]
+
+                ax.plot(
+                    np.arange(
+                        1,
+                        len(sorted_weights) + 1
+                    ),
+                    sorted_weights,
+                    color=f'C{i}',
+                    linewidth=1.5,
+                    label=fr'$\beta$={b}',
+                )
+
+            ax.set_xlabel('Query index')
+            ax.set_ylabel('Normalized weight')
+
+            ax.set_yscale('log')
+
+            ax.legend()
+
+            ax.set_axisbelow(True)
+            ax.grid(axis='y', which='major', color='grey', alpha=0.7, linewidth=0.5)
+
+            save_figure(
+                fig, os.path.join(
+                    new_path,
+                    f'{self.data}_unit_weight{suffix}.pdf'
+                ),
+            )
+
+            plt.close(fig)
+
+            fig, ax = create_figure()
+
+            all_weights = np.concatenate(
+                weight_variants['base']
+            )
+
+            positive_weights = (
+                all_weights[all_weights > 0]
+            )
+
+            if len(positive_weights) == 0:
+                raise ValueError(
+                    'All normalized weights are zero.'
+                )
+
+            weight_min = positive_weights.min()
+            weight_max = positive_weights.max()
+
+            if np.isclose(
+                weight_min,
+                weight_max,
+            ):
+                lower = weight_min / 1.1
+                upper = weight_max * 1.1
+
+                bin_edges = np.array(
+                    [lower, upper]
+                )
+
+            else:
+                bin_edges = np.logspace(
+                    np.log10(weight_min),
+                    np.log10(weight_max),
+                    31,
+                )
+
+            for i, (b, weights) in enumerate(
+                zip(betas, norm_weights)
+            ):
+                positive = weights[
+                    weights > 0
+                ]
+
+                ax.hist(
+                    positive,
+                    bins=bin_edges,
+
+                    # Sum of actual normalized weight mass
+                    # within each weight interval.
+                    weights=positive,
+
+                    histtype='step',
+                    linewidth=1.5,
+                    color=f'C{i}',
+                    label=fr'$\beta$={b}',
+                )
+
+            ax.set_xscale('log')
+            ax.set_yscale('log')
+
+            ax.set_xlabel(
+                'Normalized weight'
+            )
+            ax.set_ylabel(
+                'Aggregated weight mass'
+            )
+
+            ax.set_ylim(bottom=0)
+
+            ax.legend()
+
+            ax.set_axisbelow(True)
+            ax.grid(axis='y', which='major', color='grey', alpha=0.7, linewidth=0.5)
+
+            save_figure(
+                fig, os.path.join(
+                    new_path,
+                    f'{self.data}_clus_weight{suffix}.pdf'
+                ),
+            )
+
+            plt.close(fig)
+
+            fig, ax = create_figure()
+
+            for i, (b, weights) in enumerate(
+                zip(betas, norm_weights)
+            ):
+                x, y = lorenz_curve(weights)
+
+                gini = gini_coefficient(
+                    weights
+                )
+
+                ax.plot(
+                    x,
+                    y,
+                    color=f'C{i}',
+                    linewidth=1.5,
+                    label=(
+                        fr'$\beta$={b} '
+                        fr'($G$={gini:.2f})'
+                    ),
+                )
+
+            ax.set_xlabel(
+                'Cumulative fraction of queries'
+            )
+            ax.set_ylabel(
+                'Cumulative weight mass'
+            )
+
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+
+            ax.legend(
+                fontsize=8
+            )
+
+            ax.set_axisbelow(True)
+            ax.grid(axis='y', which='major', color='grey', alpha=0.7, linewidth=0.5)
+
+            save_figure(
+                fig, os.path.join(
+                    new_path,
+                    f'{self.data}_lorenz_weight{suffix}.pdf'
+                ),
+            )
+
+            plt.close(fig)
+
+            fig, ax = create_figure()
+
+            ax.plot(
+                betas,
+                concentration_df[
+                    'ess_ratio'
+                ].values,
+                marker='o',
+                linewidth=1.5,
+                color='#8c564b',
+            )
+
+            ax.set_xlabel(r'$\beta$')
+            ax.set_ylabel(
+                'Effective sample ratio'
+            )
+
+            ax.set_ylim(0, 1.05)
+
+            ax.set_axisbelow(True)
+            ax.grid(axis='y', which='major', color='grey', alpha=0.7, linewidth=0.5)
+
+            save_figure(
+                fig, os.path.join(
+                    new_path,
+                    f'{self.data}_ess_weight{suffix}.pdf'
+                ),
+            )
+
+            plt.close(fig)
+
+            fig, ax = create_figure()
+
+            ax.plot(
+                betas,
+                concentration_df[
+                    'top_1pct_mass'
+                ].values,
+                marker='o',
+                linewidth=1.5,
+                color='#888888',
+                label='Top 1%',
+            )
+
+            ax.plot(
+                betas,
+                concentration_df[
+                    'top_5pct_mass'
+                ].values,
+                marker='s',
+                linewidth=1.5,
+                color='#555555',
+                label='Top 5%',
+            )
+
+            ax.plot(
+                betas,
+                concentration_df[
+                    'top_10pct_mass'
+                ].values,
+                marker='^',
+                linewidth=1.5,
+                color='#222222',
+                label='Top 10%',
+            )
+
+            ax.set_xlabel(r'$\beta$')
+            ax.set_ylabel(
+                'Fraction of total weight mass'
+            )
+
+            ax.set_ylim(0, 1)
+
+            handles, labels = ax.get_legend_handles_labels()
+            ax.legend(handles[::-1], labels[::-1])
+
+            ax.set_axisbelow(True)
+            ax.grid(axis='y', which='major', color='grey', alpha=0.7, linewidth=0.5)
+
+            save_figure(
+                fig, os.path.join(
+                    new_path,
+                    f'{self.data}_top_mass_weight{suffix}.pdf'
+                ),
+            )
+
+            plt.close(fig)
+
+        for variant, weights_by_beta in weight_variants.items():
+            suffix = '' if variant == 'base' else f'_{variant}'
+            diagnostics = (concentration_df if variant == 'base'
+                           else concentration_frame(weights_by_beta))
+            plot_weight_diagnostics(weights_by_beta, diagnostics, suffix)
+
+        target_beta = 0.8
+
+        target_idx = betas.index(
+            target_beta
+        )
+
+        original = norm_weights[
+            target_idx
+        ].copy()
+
+        n = len(original)
+
+        clipped, clip_threshold = (
+            clipping_weights(
+                original,
+                percentile=99.0,
+            )
+        )
+
+        #
+
+        shrink_lambda = 0.10
+
+        shrunk = shrinkage_weights(
+            original,
+            lam=shrink_lambda,
+        )
+
+        logged = logarithmic_weights(
+            original
+        )
+
+        temperature = 2.0
+
+        tempered = temperature_weights(
+            original,
+            temperature=temperature,
+        )
+
+        mitigation_weights = {
+            'Original': original,
+
+            'Clip-99%': clipped,
+
+            fr'Shrink ($\lambda$={shrink_lambda})':
+                shrunk,
+
+            'Log':
+                logged,
+
+        }
+
+        mitigation_results = []
+
+        for name, weights in (
+            mitigation_weights.items()
+        ):
+            result = {
+                'method': name,
+
+                'gini':
+                    gini_coefficient(weights),
+
+                'kish_ess':
+                    kish_ess(weights),
+
+                'ess_ratio':
+                    kish_ess(weights) / n,
+
+                'top_1pct_mass':
+                    top_mass(weights, 0.01),
+
+                'top_5pct_mass':
+                    top_mass(weights, 0.05),
+
+                'top_10pct_mass':
+                    top_mass(weights, 0.10),
+
+                'max_weight':
+                    weights.max(),
+
+                'median_weight':
+                    np.median(weights),
+
+                'min_weight':
+                    weights.min(),
+
+                'total_weight':
+                    weights.sum(),
+            }
+
+            mitigation_results.append(
+                result
+            )
+
+        mitigation_df = pd.DataFrame(
+            mitigation_results
+        )
+
+        print('\n' + '=' * 100)
+        print(
+            f'M9 Mitigation Analysis: '
+            f'{self.data}, beta={target_beta}'
+        )
+        print('=' * 100)
+
+        print(
+            f'99th percentile clipping threshold: '
+            f'{clip_threshold:.8e}'
+        )
+
+        print(
+            mitigation_df.to_string(
+                index=False,
+                float_format=lambda x: f'{x:.6f}'
+            )
+        )
+
+        print('=' * 100 + '\n')
+
+        # Keep the original query order across all mitigation curves.
+
+        order = np.argsort(
+            original
+        )[::-1]
+
+        fig, ax = create_figure()
+
+        for name, weights in (
+            mitigation_weights.items()
+        ):
+            ax.plot(
+                np.arange(
+                    1,
+                    n + 1
+                ),
+                weights[order],
+                linewidth=1.5,
+                label=name,
+            )
+
+        ax.set_xlabel(
+            'Query index (ordered by original weight)'
+        )
+
+        ax.set_ylabel(
+            'Normalized weight'
+        )
+
+        ax.set_yscale('log')
+
+        ax.legend(
+            fontsize=7
+        )
+
+        ax.set_axisbelow(True)
+        ax.grid(axis='y', which='major', color='grey', alpha=0.7, linewidth=0.5)
+
+        save_figure(
+            fig, os.path.join(
+                new_path,
+                f'{self.data}_mitigation_weights.pdf'
+            ),
+        )
+
+        plt.close(fig)
+
+        fig, ax = create_figure()
+
+        for name, weights in (
+            mitigation_weights.items()
+        ):
+            x, y = lorenz_curve(
+                weights
+            )
+
+            gini = gini_coefficient(
+                weights
+            )
+
+            ax.plot(
+                x,
+                y,
+                linewidth=1.5,
+                label=(
+                    f'{name} '
+                    f'($G$={gini:.2f})'
+                ),
+            )
+
+        ax.set_xlabel(
+            'Cumulative fraction of queries'
+        )
+
+        ax.set_ylabel(
+            'Cumulative weight mass'
+        )
+
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+
+        ax.legend(
+            fontsize=7
+        )
+
+        ax.set_axisbelow(True)
+        ax.grid(axis='y', which='major', color='grey', alpha=0.7, linewidth=0.5)
+
+        save_figure(
+            fig, os.path.join(
+                new_path,
+                f'{self.data}_mitigation_lorenz.pdf'
+            ),
+        )
+
+        plt.close(fig)
+
+        fig, ax = create_figure()
+
+        positive_original = (
+            original > 0
+        )
+
+        for name, weights in (
+            mitigation_weights.items()
+        ):
+
+            mask = (
+                positive_original
+                & (weights > 0)
+            )
+
+            # Rasterize dense points in the PDF; keep axes and text as vectors.
+            ax.scatter(
+                original[mask],
+                weights[mask],
+                s=5,
+                alpha=0.35,
+                label=name,
+                rasterized=True,
+            )
+
+        combined_positive = np.concatenate([
+            original[original > 0],
+            clipped[clipped > 0],
+            shrunk[shrunk > 0],
+            logged[logged > 0],
+            tempered[tempered > 0],
+        ])
+
+        diagonal_min = (
+            combined_positive.min()
+        )
+
+        diagonal_max = (
+            combined_positive.max()
+        )
+
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+
+        ax.set_xlabel(
+            'Original normalized weight'
+        )
+
+        ax.set_ylabel(
+            'Modified normalized weight'
+        )
+
+        ax.legend(
+            fontsize=7
+        )
+
+        ax.set_axisbelow(True)
+        ax.grid(axis='y', which='major', color='grey', alpha=0.7, linewidth=0.5)
+
+        save_figure(
+            fig, os.path.join(
+                new_path,
+                f'{self.data}_mitigation_mapping.pdf'
+            ),
+        )
+
+        plt.close(fig)
+
+        # A common content boundary keeps tight exports the same size without
+        # changing the axes to accommodate longer tick labels in one panel.
+        from matplotlib.transforms import Bbox
+        content_bounds = []
+        for fig, _ in pending_figures:
+            fig.canvas.draw()
+            content_bounds.append(fig.get_tightbbox(fig.canvas.get_renderer()))
+        # Allow for small font-metric differences between screen and PDF renderers.
+        crop = Bbox.union(content_bounds).padded(0.02)
+        for fig, filename in pending_figures:
+            crop_frame = Rectangle(
+                (crop.x0, crop.y0), crop.width, crop.height,
+                transform=fig.dpi_scale_trans, facecolor='none', edgecolor='none',
+                clip_on=False)
+            fig.savefig(filename, dpi=300, bbox_inches='tight', pad_inches=0.04,
+                        bbox_extra_artists=[crop_frame])
+
+        return concentration_df, mitigation_df
+
+    def reb_m16(
+            self,
+            mets: List[List[PROBE]],
+            alphas: Sequence[float] = (1.0, 0.5, 0.0, -0.5, -1.0),
+            betas: Sequence[float] = (0.0, 0.2, 0.4, 0.6, 0.8),
+            output_dir: str = '../figs/m16',
+            file_format: str = 'pdf',
+            dispersion: str = 'variance',
+    ):
+        """Plot model performance and adjacent-model significance for each (alpha, beta).
+
+        Bar heights and error bars are the mean and sample standard deviation
+        over each model's runs. Models are sorted by increasing mean PROBE score
+        in every plot. Significance labels use a two-sided Welch t-test between
+        adjacent bars.
+
+        Also plot sample variance (or standard deviation with dispersion='std')
+        divided by that model's mean at the same beta, as a percentage, at
+        alpha=1.0, with one line per model in its signature color.
+        Positive means are required.
+        This extra figure is produced even if `alphas` does not include 1.0.
+        Both figures share beta across both weight factors and use finite scores only; a single finite run
+        has zero dispersion, matching the bar plot's error bars.
+
+        Returns
+        -------
+        list[str]
+            Bar figure paths in alpha-major order, followed by the dispersion figure.
+        """
+        if not mets or any(not model_runs for model_runs in mets):
+            raise ValueError("`mets` must contain at least one run for every model.")
+        if len(alphas) == 0 or len(betas) == 0:
+            raise ValueError("`alphas` and `betas` must be non-empty.")
+
+        if dispersion not in ('variance', 'std'):
+            raise ValueError("`dispersion` must be 'variance' or 'std'.")
+
+        model_names = [model_runs[0].model for model_runs in mets]
+        if len(set(model_names)) != len(model_names):
+            raise ValueError("Each entry in `mets` must represent a different model.")
+
+        missing_colors = [name for name in model_names if name not in self.mods]
+        if missing_colors:
+            raise ValueError(f'Missing signature colors for models: {missing_colors}')
+
+        os.makedirs(output_dir, exist_ok=True)
+        saved_paths = []
+
+        def significance_label(scores_a, scores_b):
+            scores_a = np.asarray(scores_a, dtype=float)
+            scores_b = np.asarray(scores_b, dtype=float)
+            scores_a = scores_a[np.isfinite(scores_a)]
+            scores_b = scores_b[np.isfinite(scores_b)]
+
+            if scores_a.size < 2 or scores_b.size < 2:
+                return 'n.s.'
+
+            _, p_value = ttest_ind(
+                scores_a,
+                scores_b,
+                equal_var=False,
+                nan_policy='omit',
+            )
+            return self._stars(p_value) if np.isfinite(p_value) else 'n.s.'
+
+        def model_results(alpha, beta):
+            results = []
+            for model_index, (model_name, model_runs) in enumerate(zip(model_names, mets)):
+                scores = np.asarray([
+                    met.calculate_final_metric(alpha, beta)
+                    for met in model_runs
+                ], dtype=float)
+                finite_scores = scores[np.isfinite(scores)]
+                if finite_scores.size == 0:
+                    raise ValueError(
+                        f'No finite PROBE scores for {model_name} at '
+                        f'alpha={alpha}, beta={beta}.'
+                    )
+                results.append({
+                    'model_index': model_index,
+                    'model_name': model_name,
+                    'scores': finite_scores,
+                    'mean': float(np.mean(finite_scores)),
+                    'std': (
+                        float(np.std(finite_scores, ddof=1))
+                        if finite_scores.size > 1 else 0.0
+                    ),
+                })
+            return results
+
+        dispersion_results = {}
+        for alpha in alphas:
+            for beta in betas:
+                results = model_results(alpha, beta)
+                if alpha == 1.0:
+                    dispersion_results[beta] = list(results)
+
+                # Retain input order for equal means so sorting is deterministic.
+                results.sort(key=lambda result: (result['mean'], result['model_index']))
+
+                x = np.arange(1, len(results) + 1, dtype=float)
+                means = np.asarray([result['mean'] for result in results])
+                stds = np.asarray([result['std'] for result in results])
+                bar_colors = [self.mods[result['model_name']] for result in results]
+
+                fig, ax = plt.subplots(figsize=(3.2, 2.0))
+                ax.bar(
+                    x,
+                    means,
+                    yerr=stds,
+                    width=0.65,
+                    color=bar_colors,
+                    edgecolor='black',
+                    linewidth=0.8,
+                    capsize=4,
+                    error_kw={'elinewidth': 1.2, 'capthick': 1.2},
+                    zorder=2,
+                )
+
+                lower = float(np.min(means - stds))
+                upper = float(np.max(means + stds))
+                value_range = upper - lower
+                if value_range <= 0:
+                    value_range = max(abs(upper), 1.0) * 0.05
+
+                bracket_step = 0.16 * value_range
+                bracket_height = 0.035 * value_range
+                bracket_base = upper + 0.01 * value_range
+
+                for pair_index in range(len(results) - 1):
+                    left_x, right_x = x[pair_index], x[pair_index + 1]
+                    bracket_y = bracket_base + pair_index * bracket_step
+                    ax.plot(
+                        [left_x, left_x, right_x, right_x],
+                        [bracket_y, bracket_y + bracket_height,
+                         bracket_y + bracket_height, bracket_y],
+                        color='black',
+                        linewidth=1.0,
+                        clip_on=False,
+                        zorder=3,
+                    )
+                    ax.text(
+                        (left_x + right_x) / 2.0,
+                        bracket_y + bracket_height + 0.01 * value_range,
+                        significance_label(
+                            results[pair_index]['scores'],
+                            results[pair_index + 1]['scores'],
+                        ),
+                        ha='center',
+                        va='bottom',
+                        fontsize=10,
+                        fontweight='bold',
+                    )
+
+                top = bracket_base
+                if len(results) > 1:
+                    top += (len(results) - 2) * bracket_step + bracket_height
+                top += 0.14 * value_range
+
+                ax.set_xlim(0.4, len(results) + 0.6)
+                ax.set_ylim(lower - 0.10 * value_range, top)
+                ax.set_xticks([])
+                ax.yaxis.set_major_locator(
+                    MaxNLocator(nbins=5, steps=[1, 2, 5, 10], min_n_ticks=3)
+                )
+                ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+                ax.set_title(
+                    rf'PROBE($\alpha$={float(alpha):g}, $\beta$={float(beta):g})'
+                )
+                ax.yaxis.grid(
+                    True, color='grey', linestyle='-', linewidth=0.5,
+                    alpha=0.4, zorder=0,
+                )
+                ax.spines['top'].set_visible(False)
+                ax.spines['right'].set_visible(False)
+                fig.tight_layout()
+
+                filename = (
+                    f'{self.data}_alpha_{alpha}_'
+                    f'beta_{beta}.{file_format}'
+                )
+                save_path = os.path.join(output_dir, filename)
+                fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.01)
+                plt.close(fig)
+                saved_paths.append(save_path)
+
+        sorted_betas = sorted(betas)
+        for beta in sorted_betas:
+            if beta not in dispersion_results:
+                dispersion_results[beta] = model_results(1.0, beta)
+        values = np.asarray([
+            [result['std'] for result in dispersion_results[beta]]
+            for beta in sorted_betas
+        ])
+        means = np.asarray([
+            [result['mean'] for result in dispersion_results[beta]]
+            for beta in sorted_betas
+        ])
+        if np.any(means <= 0.0):
+            beta_index, model_index = np.argwhere(means <= 0.0)[0]
+            raise ValueError(
+                f'Relative dispersion requires a positive mean for '
+                f'{model_names[model_index]} at alpha=1.0, '
+                f'beta={sorted_betas[beta_index]}.'
+            )
+        if dispersion == 'variance':
+            values = values ** 2
+        # Every model/beta pair uses its own run mean as the denominator.
+        values = values / means
+
+        # Match the M9 diagnostic canvas and reserve the same label margins.
+        fig, ax = plt.subplots(figsize=(4, 3), layout='none')
+        fig.subplots_adjust(left=0.25, right=0.95, bottom=0.22, top=0.92)
+        for model_index, model_name in enumerate(model_names):
+            ax.plot(
+                sorted_betas, values[:, model_index],
+                color=self.mods[model_name], marker='o', linewidth=1.5, label=model_name,
+            )
+        ax.set_xlabel(r'$\beta$', fontsize=14)
+        ax.set_ylabel(
+            'Variance / mean (%)' if dispersion == 'variance' else 'Std / mean (%)',
+            fontsize=14,
+        )
+        ax.tick_params(axis='both', labelsize=12)
+        ax.yaxis.set_major_formatter(
+            PercentFormatter(xmax=1.0, decimals=1 if dispersion == 'variance' else 0)
+        )
+        ax.set_xticks(sorted_betas)
+        if dispersion == 'variance':
+            ax.set_ylim(0.0, 0.005)
+        else:
+            ax.set_ylim(bottom=0.0)
+        ax.set_axisbelow(True)
+        ax.yaxis.grid(True, color='grey', linewidth=0.5, alpha=0.7)
+        ax.legend(
+            fontsize=11, loc='upper center',
+            ncol=min(2, len(model_names)),
+            handlelength=1.3, handletextpad=0.4, columnspacing=0.8,
+            borderpad=0.35,
+        )
+
+        save_path = os.path.join(
+            output_dir, f'{self.data}_alpha_1.0_beta_{dispersion}.{file_format}'
+        )
+        fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.01)
+        plt.close(fig)
+        saved_paths.append(save_path)
+
+        return saved_paths
+
+    def reb_m6(self, Es: List, ls: List):
+        def delta(x, E, l):
+            diff = E - x
+            return (1-l)*(np.log(diff) / diff)
+        output_dir = '../figs/m6'
+        os.makedirs(output_dir, exist_ok=True)
+        for l in ls:
+            fig, ax = plt.subplots(figsize=(4, 3))
+            for i, E in enumerate(Es):
+                x = np.arange(E)
+                y = delta(x, E, l)
+                ax.plot(x, y, color=f'C{i}', label=f'{int(E/1000)}K')
+                ax.axvline(0.1*E, linestyle='--', color=f'C{i}', linewidth=1, alpha=0.7)
+            
+            ax.set_yscale('log')
+            ax.legend()
+            
+            filename = (
+                f'{self.data}_l_{l}.pdf'
+            )
+            save_path = os.path.join(output_dir, filename)
+            fig.savefig(save_path, dpi=300, bbox_inches='tight', pad_inches=0.01)
+            plt.close(fig)
+                

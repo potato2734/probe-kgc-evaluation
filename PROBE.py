@@ -1,10 +1,21 @@
 import numpy as np
 import math
+import warnings
 from collections import defaultdict
 
+DEFAULT_ALPHA = 1.0
+DEFAULT_BETA = 0.0
 
 class PROBE():
-    def __init__(self, model, data, info_dump, nentity, nrelation, alpha, beta, gamma, total_degree, rel, w_mode='t'):
+    """PROBE(alpha, beta), with beta shared by entity and relation weights.
+
+    The legacy gamma argument is accepted but ignored, as in earlier releases.
+    Training-referenced epsilons are required when beta is nonzero.
+    """
+    def __init__(self, model, data, info_dump, nentity, nrelation, alpha=DEFAULT_ALPHA,
+                 beta=DEFAULT_BETA, gamma=None, total_degree=None, rel=None, w_mode='t',
+                 *, epsilon_entity=None, epsilon_relation=None):
+        self._check_legacy_gamma(gamma)
         self.total_degree = total_degree
         self.model = model
         self.data = data
@@ -15,11 +26,15 @@ class PROBE():
         self.nrelation = nrelation
         self.alpha = alpha
         self.beta = beta
-        self.gamma = gamma
         self.rel = rel
         self.W = None
-
-
+        # These constants must be computed over the full training statistics.
+        self.epsilon_entity = epsilon_entity
+        self.epsilon_relation = epsilon_relation
+        for name, epsilon in (('epsilon_entity', epsilon_entity),
+                              ('epsilon_relation', epsilon_relation)):
+            if epsilon is not None and (not math.isfinite(epsilon) or epsilon <= 0):
+                raise ValueError(f'{name} must be finite and positive')
 
     def unpack_info(self, info):
         query_ls = []
@@ -37,8 +52,8 @@ class PROBE():
             query_ls.append(query)
             mode_ls.append(mode)
             piv_ls.append(query[0] if mode == 't' else query[2])
-            e2p[query[0] if mode == 't' else query[2]] = p_e # universal truth
-            re2p[tuple(query)].append(p_r_e) # universal truth
+            e2p[query[0] if mode == 't' else query[2]] = p_e
+            re2p[tuple(query)].append(p_r_e)
             rank_ls.append(rank)
             p_r_e_ls.append(p_r_e)
             p_e_ls.append(p_e)
@@ -60,7 +75,6 @@ class PROBE():
                     t_p_r_e_ls.append(re2p[tuple(query)][0])
             self.t_p_e = np.array(t_p_e_ls)
             self.t_p_r_e = np.array(t_p_r_e_ls)
-
 
         return query_ls, mode_ls, np.array(piv_ls), e2p, np.array(rank_ls), np.array(p_r_e_ls), np.array(p_e_ls), np.array(filtered_ls)
 
@@ -93,34 +107,60 @@ class PROBE():
         return norm_arr
 
     def w_entity_function(self, arr, param, epsilon):
+        if param == 0:
+            return np.ones_like(arr, dtype=float)
+        if epsilon is None:
+            raise ValueError('Nonuniform weights require a training-referenced epsilon')
         return 1 / (epsilon + arr) ** param
 
     def w_relation_function(self, arr, param, epsilon):
-        return 1 / (epsilon + arr) ** param
+        return self.w_entity_function(arr, param, epsilon)
 
-    def nonezero_min(self, x):
+    @staticmethod
+    def nonezero_min(x):
         nz_min = np.inf
-        for i in x:
-            if i != 0.0 and nz_min > i:
-                nz_min = i
+        for probability in x:
+            if not math.isfinite(probability) or probability < 0:
+                raise ValueError('Training probabilities must be finite and nonnegative')
+            if 0 < probability < nz_min:
+                nz_min = probability
+        if not math.isfinite(nz_min):
+            raise ValueError('Training probabilities must contain a positive value')
         return nz_min
+
+    @staticmethod
+    def training_epsilons(entity_probabilities, relation_probabilities):
+        """Minima over all training P(e) and P(r | e), excluding zeros."""
+        return (
+            PROBE.nonezero_min(entity_probabilities),
+            PROBE.nonezero_min(probability
+                              for row in relation_probabilities.values()
+                              for probability in row),
+        )
 
     def set_entity_weight(self, beta):
         self.beta = beta
-        self.entity_raw_weights = self.w_entity_function(self.t_p_e, self.beta, self.nonezero_min(self.t_p_e))
+        self.entity_raw_weights = self.w_entity_function(self.t_p_e, self.beta, self.epsilon_entity)
 
-    def set_relation_weight(self, gamma):
-        self.gamma = gamma
-        self.relation_raw_weights = self.w_relation_function(self.t_p_r_e, self.beta, self.nonezero_min(self.t_p_r_e))
+    @staticmethod
+    def _check_legacy_gamma(gamma):
+        if gamma is not None:
+            warnings.warn(
+                'PROBE gamma is deprecated and ignored; beta controls both weight factors',
+                DeprecationWarning, stacklevel=3,
+            )
 
-    def calculate_final_metric(self, alpha, beta, gamma, tmode='f*'):
-        self.alpha = alpha
-        self.beta = beta
-        self.gamma = gamma
+    def set_relation_weight(self, beta):
+        self.relation_raw_weights = self.w_relation_function(
+            self.t_p_r_e, beta, self.epsilon_relation)
 
+    def calculate_final_metric(self, alpha=DEFAULT_ALPHA, beta=DEFAULT_BETA,
+                               gamma=None, tmode='f*'):
+        """Score with normalized ranks by default; tmode='f' uses raw rank powers."""
+        self._check_legacy_gamma(gamma)
         self.set_transform_function(alpha, mode=tmode)
-        self.set_entity_weight(self.beta)
-        self.set_relation_weight(self.beta)
+        self.set_entity_weight(beta)
+        self.set_relation_weight(beta)
 
         self.norm_W = PROBE.normalize_array(self.entity_raw_weights * self.relation_raw_weights)
 
@@ -129,5 +169,3 @@ class PROBE():
         final_metric = np.dot(self.transformed_ranks, self.norm_W)
 
         return final_metric
-
-
